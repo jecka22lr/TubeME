@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.0";
+    static final String VERSION = "0.1.1";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -142,6 +142,7 @@ final class Api {
                 if (leg) lastGood = e[1];
                 return out;
             } catch (Exception ex) {
+                Log.err("list " + e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
             }
@@ -162,6 +163,7 @@ final class Api {
                         + "description,publishedText,formatStreams")));
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
+                Log.err("info " + e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;
@@ -322,6 +324,7 @@ final class Api {
                 }
                 return s;
             } catch (Exception ex) {
+                Log.err("stream " + e[1], ex);
                 last = ex;
             }
         }

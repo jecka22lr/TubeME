@@ -1,6 +1,4 @@
-First build. Not yet confirmed on a real phone or against the live servers.
+Debug build, still not confirmed playing on a real phone.
 
-- Search, popular, open by ID or link, video page with thumbnail
-- Random server pick with failover across YtAPILegacy, yt2009 and Invidious
-- Playback through RealPlayer (.ram) on Symbian, download then play, in-app MMAPI, or the phone's own player
-- Quality from H.263 288p 3GP up to H.264 360p
+- New Log screen (main menu): shows what the app did this session and, after a crash, the previous one. "To file" saves it as tubeme-log.txt
+- Thumbnails are drawn by the app, so they show on phones that hide image items in forms (C6-00)

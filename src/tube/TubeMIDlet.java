@@ -16,7 +16,6 @@ import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.Form;
 import javax.microedition.lcdui.Gauge;
 import javax.microedition.lcdui.Image;
-import javax.microedition.lcdui.ImageItem;
 import javax.microedition.lcdui.Item;
 import javax.microedition.lcdui.List;
 import javax.microedition.lcdui.StringItem;
@@ -27,7 +26,7 @@ import javax.microedition.midlet.MIDlet;
 /** UI and flow. All network and file work happens on worker threads. */
 public class TubeMIDlet extends MIDlet implements CommandListener {
     private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
-            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8;
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
 
     private Display display;
@@ -73,12 +72,18 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
     private TextField sList, sCustom, sDir;
     private List qualityList;
     private Form savedForm;
+    private Form logForm;
+    private final Command cLogFile = new Command("To file", "Save log to file", Command.SCREEN, 2);
 
     protected void startApp() {
         if (started) return;
         started = true;
         display = Display.getDisplay(this);
+        Log.init();
         settings.load(api);
+        Log.add("TubeME " + Api.VERSION + " on " + System.getProperty("microedition.platform"));
+        Log.add("symbian=" + Util.isSymbian() + " files=" + Util.hasFiles() + " mmapi=" + System.getProperty("microedition.media.version")
+                + " heap=" + (Runtime.getRuntime().totalMemory() / 1024) + "K mode=" + settings.mode + " q=" + settings.quality);
         // optional JAD/manifest overrides, so servers can be changed without rebuilding
         String p = getAppProperty("TubeME-List-URL");
         if (p != null && p.trim().length() > 0 && settings.listUrl.equals(Api.DEFAULT_LIST_URL)) settings.listUrl = p.trim();
@@ -91,6 +96,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         menu.append("Settings", null);
         menu.append("Update servers", null);
         menu.append("About", null);
+        menu.append("Log", null);
         menu.addCommand(cExit);
         menu.setCommandListener(this);
         display.setCurrent(menu);
@@ -187,6 +193,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                 case 5:
                     showAbout();
                     break;
+                case 6:
+                    showLog();
+                    break;
             }
         } else if (d == searchBox) {
             if (c == cOk && searchBox.getString().trim().length() > 0) {
@@ -246,6 +255,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         } else if (d == settingsForm) {
             if (c == cSave) saveSettings();
             show(menu);
+        } else if (d == logForm) {
+            if (c == cLogFile) run(T_LOGFILE, null, "Saving log...");
+            else show(menu);
         } else if (d == savedForm) {
             if (c == cPlayFile && savedPath != null) run(T_PLAYFILE, savedPath, "Opening...");
             else show(home());
@@ -339,6 +351,16 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         show(f);
     }
 
+    private void showLog() {
+        logForm = new Form("Log");
+        if (Log.hasPrevious()) logForm.append(new StringItem("Previous session", Log.text(true)));
+        logForm.append(new StringItem("This session", Log.text(false)));
+        logForm.addCommand(cBack);
+        if (Util.hasFiles()) logForm.addCommand(cLogFile);
+        logForm.setCommandListener(this);
+        show(logForm);
+    }
+
     private void showResults(String title, Vector v) {
         items = v;
         results = new List(title, Choice.IMPLICIT);
@@ -408,6 +430,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         }
 
         public void run() {
+            if (kind != T_THUMB) Log.add("task " + kind + " start");
             try {
                 switch (kind) {
                     case T_SEARCH: {
@@ -460,8 +483,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                     case T_THUMB:
                         doThumb((Video) arg);
                         break;
+                    case T_LOGFILE: {
+                        String path = dir() + "tubeme-log.txt";
+                        OutputStream o = Files.openOut(path);
+                        try {
+                            if (Log.hasPrevious()) o.write(Log.bytes("--- previous session ---\n" + Log.text(true)));
+                            o.write(Log.bytes("--- this session ---\n" + Log.text(false)));
+                        } finally {
+                            try { o.close(); } catch (Throwable t) {}
+                            Files.closeOut();
+                        }
+                        info("Log", "Saved to " + path.substring(8), menu);
+                        break;
+                    }
                 }
+                if (kind != T_THUMB) Log.add("task " + kind + " done");
             } catch (Throwable t) {
+                Log.err("task " + kind, t);
                 if (kind == T_THUMB || g != gen) return;
                 alert("Error", Api.msg(t), home());
             }
@@ -484,15 +522,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
     private void doThumb(Video v) throws Exception {
         String u = Api.thumbUrl(v, display.getCurrent() == null ? 240 : display.getCurrent().getWidth());
         if (u.length() == 0) return;
+        Log.add("thumb " + u);
         byte[] d = Net.get(u, 80000);
         Image img = Image.createImage(d, 0, d.length);
+        Log.add("thumb ok " + d.length + "b " + img.getWidth() + "x" + img.getHeight());
         Form f = videoForm;
-        if (f != null && cur == v) f.insert(0, new ImageItem(null, img, Item.LAYOUT_CENTER | Item.LAYOUT_NEWLINE_AFTER, null));
+        if (f != null && cur == v) {
+            Thumb t = new Thumb(img);
+            t.setLayout(Item.LAYOUT_CENTER | Item.LAYOUT_NEWLINE_AFTER);
+            f.insert(0, t);
+        }
     }
 
     private String dir() throws Exception {
         if (dirOk == null) {
+            Log.add("pickDir pref=" + settings.dir);
             dirOk = Files.pickDir(settings.dir);
+            Log.add("dir=" + dirOk);
             if (settings.dir.length() == 0) {
                 // remember it so the next start doesn't probe (and prompt) again
                 settings.dir = dirOk;
@@ -506,8 +552,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         Video v = cur;
         if (v == null) return;
         int m = mode();
+        Log.add("play mode=" + m + " q=" + settings.quality + " skip=" + skip);
         Api.Stream s = api.stream(v, settings.quality, skip);
         lastNext = s.next;
+        Log.add("stream " + s.url);
         if (g != gen) return;
         if (m == Settings.MODE_INAPP) {
             startPlayer(s.url);
@@ -517,7 +565,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         if (m == Settings.MODE_REAL) {
             try {
                 target = Files.writeRam(dir(), s.url);
+                Log.add("ram written " + target);
             } catch (Throwable t) {
+                Log.err("writeRam", t);
                 // can't write the .ram: let the phone deal with the plain link
                 target = s.url;
             }
@@ -532,12 +582,15 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
 
     /** Hands a URL or file to the phone. */
     private void launch(String url) throws Exception {
+        Log.add("platformRequest " + url);
         boolean mustExit = platformRequest(url);
+        Log.add("platformRequest returned " + mustExit);
         if (mustExit) info("Player", "Close TubeME and the video will open.", home());
         else show(home());
     }
 
     private void playFile(String path) throws Exception {
+        Log.add("playFile " + path);
         if (!Util.isSymbian() && settings.mode != Settings.MODE_EXTERNAL && hasVideoPlayer()) startPlayer(path);
         else launch(path);
     }
@@ -557,8 +610,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                 s = api.stream(v, settings.quality, skip);
                 lastNext = s.next;
                 waitText.setText("Connecting to " + s.server.substring(s.server.indexOf("://") + 3) + "\n(conversion can take a minute)");
+                Log.add("dl open " + s.url);
                 c = Net.open(s.url);
             } catch (Exception e) {
+                Log.err("dl open", e);
                 last = e;
                 c = null;
                 if (s == null) break;
@@ -579,6 +634,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         boolean ok = false;
         try {
             long len = c.getLength();
+            Log.add("dl connected len=" + len + " type=" + c.getType() + " -> " + path);
             if (len > 0) {
                 busy("Downloading...", true);
             } else {
@@ -586,11 +642,17 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             }
             out = Files.openOut(path);
             in = c.openInputStream();
+            Log.add("dl streams open");
             byte[] buf = new byte[4096];
             int n;
             long mark = 0;
+            boolean first = true;
             while ((n = in.read(buf)) > 0) {
                 if (g != gen) return;
+                if (first) {
+                    first = false;
+                    Log.add("dl first bytes");
+                }
                 out.write(buf, 0, n);
                 done += n;
                 if (done - mark >= 32768) {
@@ -603,6 +665,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                     }
                 }
             }
+            Log.add("dl done " + done + "b");
             if (done == 0) throw new Exception("Server sent an empty video");
             ok = true;
         } finally {

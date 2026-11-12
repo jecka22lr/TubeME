@@ -69,6 +69,7 @@ final class Files {
                 probe(d);
                 return d;
             } catch (Throwable t) {
+                Log.err("probe " + d, t);
                 last = t;
             }
         }

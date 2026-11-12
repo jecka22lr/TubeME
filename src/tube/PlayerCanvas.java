@@ -64,10 +64,13 @@ final class PlayerCanvas extends Canvas implements Runnable, PlayerListener, Com
     /** Opens the stream; called on a worker thread. */
     public void run() {
         try {
+            Log.add("player create " + url);
             Player p = Manager.createPlayer(url);
             player = p;
             p.addPlayerListener(this);
+            Log.add("player realize");
             p.realize();
+            Log.add("player realized type=" + p.getContentType());
             if (closed) { p.close(); return; }
             VideoControl vc = (VideoControl) p.getControl("VideoControl");
             if (vc != null) {
@@ -78,13 +81,16 @@ final class PlayerCanvas extends Canvas implements Runnable, PlayerListener, Com
             }
             status = "Buffering...";
             repaint();
+            Log.add("player prefetch, video=" + (vc != null));
             p.prefetch();
             setVolume(0);
             if (closed) { p.close(); return; }
             p.start();
+            Log.add("player started");
             status = vc == null ? "Playing (audio only)" : "";
             repaint();
         } catch (Throwable t) {
+            Log.err("player", t);
             status = "Can't play: " + Api.msg(t);
             repaint();
         }
@@ -192,6 +198,7 @@ final class PlayerCanvas extends Canvas implements Runnable, PlayerListener, Com
     }
 
     public void playerUpdate(Player p, String event, Object data) {
+        if (!"volumeChanged".equals(event)) Log.add("player event " + event + " " + data);
         if (PlayerListener.END_OF_MEDIA.equals(event)) {
             status = "Finished";
             repaint();
