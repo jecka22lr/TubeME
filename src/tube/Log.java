@@ -10,7 +10,8 @@ import javax.microedition.rms.RecordStore;
  */
 final class Log {
     private static final String STORE = "tubelog";
-    private static final int MAX = 150;
+    /** Lines kept in memory and at most this many in the store. */
+    private static final int MAX = 300;
 
     private static final Vector now = new Vector();
     private static Vector before = new Vector();
@@ -48,13 +49,28 @@ final class Log {
         String line = (ms / 1000) + "." + ((ms % 1000) / 100) + " " + s;
         now.addElement(line);
         if (now.size() > MAX) now.removeElementAt(0);
-        if (written >= MAX) return;
-        written++;
         RecordStore rs = null;
         try {
-            rs = RecordStore.openRecordStore(STORE, true);
+            if (written >= MAX) {
+                // store is full: start it over with the newer half, so the
+                // lines just before a crash are always the ones that survive
+                try {
+                    RecordStore.deleteRecordStore(STORE);
+                } catch (Throwable t) {
+                }
+                rs = RecordStore.openRecordStore(STORE, true);
+                written = 0;
+                for (int i = now.size() / 2; i < now.size() - 1; i++) {
+                    byte[] d = bytes((String) now.elementAt(i));
+                    rs.addRecord(d, 0, d.length);
+                    written++;
+                }
+            } else {
+                rs = RecordStore.openRecordStore(STORE, true);
+            }
             byte[] d = bytes(line);
             rs.addRecord(d, 0, d.length);
+            written++;
         } catch (Throwable t) {
         } finally {
             close(rs);

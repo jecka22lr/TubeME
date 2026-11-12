@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.6";
+    static final String VERSION = "0.1.7";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -27,8 +27,22 @@ final class Api {
         "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p"
     };
 
+    /**
+     * Quality ids worth offering on this phone. H.264 360p is left out where
+     * the phone is known not to show it (S60 3rd and 5th Edition decode
+     * H.264 only up to QVGA).
+     */
+    static int[] qualities(String platform) {
+        if (Util.h264OnlyQvga(platform)) return new int[] { Q_H263, Q_MP4V, Q_MP4V_360 };
+        return new int[] { Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+    }
+
     /** How long a yt2009 server gets to fetch/convert a video before we move on. */
     static long PREPARE_TIMEOUT = 90000;
+    /** YtAPILegacy converts the whole video before the first byte arrives. */
+    static long CONVERT_TIMEOUT = 300000;
+    /** A server that failed is not asked again for this long. */
+    static long RETRY_DEAD_AFTER = 120000;
     static long PING_TIMEOUT = 8000;
 
     /** Gets one line per step worth showing the user. */
@@ -58,9 +72,11 @@ final class Api {
 
     /** Last YtAPILegacy server that answered. */
     private String lastGood;
-    /** Servers seen answering / failing this session (base URL keys). */
+    /** Servers seen answering / unreachable this session (base URL keys; dead maps to when). */
     private final Hashtable good = new Hashtable();
     private final Hashtable dead = new Hashtable();
+    /** Reachable, but search/info from it failed: last for metadata, still fine for video. */
+    private final Hashtable metaBad = new Hashtable();
 
     void markGood(String base) {
         good.put(base, "");
@@ -68,8 +84,16 @@ final class Api {
     }
 
     private void markDead(String base) {
-        dead.put(base, "");
+        dead.put(base, new Long(System.currentTimeMillis()));
         good.remove(base);
+    }
+
+    /** Files a metadata failure: no connection means down, anything else means "answers, but not with this". */
+    private void failed(String base, Exception ex) {
+        String m = ex.getMessage();
+        boolean network = ex instanceof java.io.IOException && (m == null || !m.startsWith("HTTP "));
+        if (network) markDead(base);
+        else metaBad.put(base, "");
     }
 
     /**
@@ -79,20 +103,9 @@ final class Api {
      */
     private boolean alive(String base) {
         if (good.containsKey(base)) return true;
-        if (dead.containsKey(base)) return false;
-        try {
-            Net.get(base + "/health", 4000);
-            markGood(base);
-        } catch (Exception e) {
-            String m = e.getMessage();
-            // an HTTP error still means somebody is home (older servers lack /health)
-            if (m != null && m.startsWith("HTTP ")) markGood(base);
-            else {
-                Log.err("health " + base, e);
-                markDead(base);
-            }
-        }
-        return good.containsKey(base);
+        Object when = dead.get(base);
+        if (when != null && System.currentTimeMillis() - ((Long) when).longValue() < RETRY_DEAD_AFTER) return false;
+        return ping(base);
     }
 
     /** Reply time of the last check per server, in ms. */
@@ -229,6 +242,7 @@ final class Api {
         legacy = l;
         yt2009 = y;
         invidious = i;
+        order = null;
         return l.size() + y.size() + i.size();
     }
 
@@ -279,15 +293,22 @@ final class Api {
         Vector i = new Vector();
         addShuffled(i, invidious, "I");
         i = ranked(i, 0);
-        // a YtAPILegacy server that is down drops behind working Invidious ones
+        // servers that are down or already failed at metadata go behind everything that works
         for (int pass = 0; pass < 2; pass++) {
             for (int k = 0; k < l.size(); k++) {
                 String[] e = (String[]) l.elementAt(k);
-                if (dead.containsKey(e[1]) == (pass == 1)) add(v, e[0], e[1]);
+                if (metaTrouble(e[1]) == (pass == 1)) add(v, e[0], e[1]);
             }
-            if (pass == 0) for (int k = 0; k < i.size(); k++) add(v, "I", ((String[]) i.elementAt(k))[1]);
+            for (int k = 0; k < i.size(); k++) {
+                String[] e = (String[]) i.elementAt(k);
+                if (metaTrouble(e[1]) == (pass == 1)) add(v, e[0], e[1]);
+            }
         }
         return v;
+    }
+
+    private boolean metaTrouble(String base) {
+        return dead.containsKey(base) || metaBad.containsKey(base);
     }
 
     // ---- metadata ----
@@ -319,10 +340,11 @@ final class Api {
                 }
                 if (leg) lastGood = e[1];
                 markGood(e[1]);
+                metaBad.remove(e[1]);
                 return out;
             } catch (Exception ex) {
                 Log.err("list " + e[1], ex);
-                markDead(e[1]);
+                failed(e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
             }
@@ -344,7 +366,7 @@ final class Api {
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
                 Log.err("info " + e[1], ex);
-                markDead(e[1]);
+                failed(e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;

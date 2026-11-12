@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock YtAPILegacy / yt2009 / Invidious servers + the shared instance list.
 Made-up videos only. Prints a CHECK line per endpoint hit; exits 1 if any expected one is missing."""
-import json, sys, threading, time
+import json, os, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -65,6 +65,12 @@ class H(BaseHTTPRequestHandler):
                 self.hit("legacy-video:" + kind)
                 if kind == "h263":   # conversion: no length, like a live ffmpeg pipe
                     return self.send(200, VIDEO, "video/3gpp", length=False)
+                if os.environ.get("MOCK_TRUNCATE"):   # claims more than it sends, like a dropped connection
+                    self.send_response(200); self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Content-Length", str(len(VIDEO) + 50000)); self.end_headers()
+                    self.wfile.write(VIDEO); return
+                if os.environ.get("MOCK_ERRORPAGE"):  # an error page with a 200, as some proxies do
+                    return self.send(200, b"<html>busy</html>", "text/html")
                 return self.send(200, VIDEO, "video/mp4")
             if p.startswith("/thumbnail/"):
                 self.hit("thumb:" + q.get("quality", ["-"])[0]); return self.send(200, THUMB, "image/png")
@@ -76,7 +82,9 @@ class H(BaseHTTPRequestHandler):
             if p == "/slow":
                 time.sleep(4); return self.send(302, b"", headers={"Location": "/assets/late.bin"})
             if p.startswith("/assets/"):
-                self.hit("yt2009-file"); return self.send(200, VIDEO, "video/mp4")
+                self.hit("yt2009-file")
+                if os.environ.get("MOCK_ERRORPAGE"): return self.send(200, b"<html>busy</html>", "text/html")
+                return self.send(200, VIDEO, "video/mp4")
         if port == INV:
             if p == "/api/v1/search":
                 self.hit("inv-search")

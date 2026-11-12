@@ -14,7 +14,8 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 | In-app player | MMAPI (JSR-135) inside the app | no file access, video supported |
 | Phone's player/browser | `platformRequest` with the stream URL | nothing else works |
 
-Quality: H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p (default tier is MPEG-4), H.264 360p.
+Quality: H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p. The default is MPEG-4 360p on Symbian and
+MPEG-4 270p elsewhere; H.264 360p is not offered on S60 3rd and 5th Edition (see the table below).
 
 ## What Symbian phones can decode
 

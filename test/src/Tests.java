@@ -51,6 +51,10 @@ public class Tests {
         ok(!Util.h264OnlyQvga("SonyEricssonK800i/R1KG001"), "non-Symbian: no note");
         ok(!Util.h264OnlyQvga(null), "no platform: no note");
 
+        eq(Integer.valueOf(Api.qualities(c6).length), Integer.valueOf(3), "H.264 hidden on S60 5th");
+        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(4), "H.264 offered on Symbian^3");
+        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(4), "H.264 offered when platform unknown");
+
         // --- instance list ---
         Api api = new Api();
         eq(Integer.valueOf(api.updateInstances(L + "/notPipe.json")), Integer.valueOf(5), "instance list count");
@@ -167,6 +171,26 @@ public class Tests {
         slow.stream(wv, Api.Q_MP4V, 0);
         ok(((String) said.elementAt(0)).startsWith("Asking 127.0.0.1:18083 to get the video ready"), "progress line: " + said.elementAt(0));
         eq(Api.host("http://a.b:81/x"), "a.b:81", "host of url");
+
+        threw = false; try { Net.open(Y + "/slow", 1000); } catch (java.io.IOException e) { threw = e.getMessage().equals("no answer after 1 s"); }
+        ok(threw, "hung open times out");
+        HttpConnection oc = Net.open(Y + "/slow", 8000);
+        eq(Integer.valueOf(oc.getResponseCode()), Integer.valueOf(200), "slow open inside the limit works and follows the redirect");
+        Net.close(oc);
+
+        // --- a server that answers but fails at search is still used for video ---
+        Api mb = new Api(); mb.legacy = new Vector(); mb.legacy.addElement(Y); mb.invidious.addElement(INV);
+        eq(((Video) mb.search("x").elementAt(0)).title, "Inv result", "search falls through a server that 404s");
+        eq(mb.stream(wv, Api.Q_H264, 0).url, Y + "/direct_url?video_id=abcDEF_-001&quality=360&ext=.mp4", "metadata failure does not block video");
+        // --- an unreachable one is refused, then asked again once the wait is over ---
+        Api rd = new Api(); rd.legacy = new Vector(); rd.legacy.addElement(GONE);
+        threw = false; try { rd.stream(wv, Api.Q_H264, 0); } catch (Exception e) { threw = true; } ok(threw, "unreachable refused");
+        ok(rd.status(GONE).equals("down"), "marked down");
+        Api.RETRY_DEAD_AFTER = 0;
+        rd.legacy.setElementAt(L, 0);
+        Video rv2 = new Video(); rv2.id = "abcDEF_-002";
+        ok(rd.stream(rv2, Api.Q_H264, 0).url.startsWith(L), "retried after the wait");
+        Api.RETRY_DEAD_AFTER = 120000;
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);

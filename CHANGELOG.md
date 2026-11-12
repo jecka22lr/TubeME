@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.7
+
+- H.264 360p is no longer offered on S60 3rd and 5th Edition (it plays as sound only there); a saved
+  H.264 setting moves to MPEG-4 360p. Still offered on Symbian^3 and later and on other phones
+- Fixes from a code review:
+  - a download that ran out of servers repeated the whole round of servers (and their 90 s waits)
+    once per server, and a server could be tried twice in one attempt
+  - a download cut off part-way was reported as saved; it now fails and removes the partial file
+  - an error page sent in place of a video was saved as the video
+  - a failed re-download could delete an earlier complete copy of the same video
+  - a failed server-list update was recorded as done, blocking retries for three days
+  - search, video info, thumbnails and downloads had no time limit (now 30 s, 60 s for a ready
+    file, 5 minutes for a YtAPILegacy conversion)
+  - the crash log stopped being written after 150 lines; it now keeps rolling
+  - a server whose search failed was also refused for video, reported as "unreachable"
+  - the pre-play reachability check had no time limit and could wrongly mark a server down
+
 ## 0.1.6
 
 - Default quality on Symbian is MPEG-4 360p: per Nokia's specs, S60 3rd/5th Edition phones decode

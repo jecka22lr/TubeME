@@ -21,17 +21,22 @@ final class Net {
         return c;
     }
 
-    /** Opens url, following redirects by hand (not every phone does it). Caller closes. */
+    /** Default patience for metadata, thumbnails and ready files. */
+    static final long TIMEOUT = 30000;
+
     static HttpConnection open(String url) throws IOException {
+        return open(url, TIMEOUT);
+    }
+
+    /**
+     * Opens url, following redirects by hand (not every phone does it), and
+     * gives up when a server takes longer than timeoutMs to answer. Caller closes.
+     */
+    static HttpConnection open(String url, long timeoutMs) throws IOException {
         for (int hop = 0; hop < 6; hop++) {
-            HttpConnection c = raw(url);
-            int code;
-            try {
-                code = c.getResponseCode();
-            } catch (IOException e) {
-                close(c);
-                throw e;
-            }
+            Job j = runJob(2, url, timeoutMs);
+            HttpConnection c = j.c;
+            int code = ((Integer) j.result).intValue();
             if (code >= 200 && code < 300) return c;
             String loc = (code >= 300 && code < 400) ? c.getHeaderField("Location") : null;
             close(c);
@@ -76,15 +81,17 @@ final class Net {
      * yt2009 answers its conversion endpoints with a Location header.
      */
     static String redirect(String url, long timeoutMs) throws IOException {
-        return (String) timed(1, url, timeoutMs);
+        return (String) runJob(1, url, timeoutMs).result;
     }
 
     /**
      * Runs a request on a helper thread and gives up after timeoutMs. MIDP
      * has no socket timeouts, and a server that never answers would
      * otherwise hang the task forever with nothing on screen.
+     * kind 0 = response code, 1 = redirect target, 2 = response code with
+     * the connection left open in Job.c for the caller.
      */
-    private static Object timed(int kind, String url, long timeoutMs) throws IOException {
+    private static Job runJob(int kind, String url, long timeoutMs) throws IOException {
         Job j = new Job(kind, url);
         new Thread(j).start();
         long end = System.currentTimeMillis() + timeoutMs;
@@ -98,6 +105,7 @@ final class Net {
                 }
             }
             if (!j.done) {
+                // the helper closes the connection itself if it ever gets one
                 j.abandoned = true;
                 close(j.c);
                 throw new IOException("no answer after " + (timeoutMs / 1000) + " s");
@@ -107,7 +115,7 @@ final class Net {
             if (j.error instanceof IOException) throw (IOException) j.error;
             throw new IOException(j.error.toString());
         }
-        return j.result;
+        return j;
     }
 
     private static final class Job implements Runnable {
@@ -126,14 +134,14 @@ final class Net {
         public void run() {
             try {
                 c = raw(url);
-                result = kind == 0 ? (Object) new Integer(c.getResponseCode()) : redirectOf(c, url);
+                result = kind == 1 ? (Object) redirectOf(c, url) : new Integer(c.getResponseCode());
             } catch (Throwable t) {
                 error = t;
-            } finally {
-                close(c);
             }
             synchronized (this) {
                 done = true;
+                // only a successful, still-wanted kind 2 hands its connection on
+                if (kind != 2 || error != null || abandoned) close(c);
                 notifyAll();
             }
         }
@@ -160,7 +168,7 @@ final class Net {
 
     /** Response code of url without following redirects or reading the body. Any answer means the server is up. */
     static int code(String url, long timeoutMs) throws IOException {
-        return ((Integer) timed(0, url, timeoutMs)).intValue();
+        return ((Integer) runJob(0, url, timeoutMs).result).intValue();
     }
 
     /**

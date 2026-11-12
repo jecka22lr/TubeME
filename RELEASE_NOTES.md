@@ -1,5 +1,7 @@
-Codec defaults from Nokia's published specs. Downloads and playback are still unconfirmed on a real phone.
+Code review fixes. Downloads and playback are still unconfirmed on a real phone.
 
-- Symbian default quality is MPEG-4 360p (S60 3rd/5th Edition decode MPEG-4 to VGA/nHD, H.264 only to QVGA)
-- A note appears when H.264 360p is chosen on a phone that can't show it
-- Includes 0.1.5: step-by-step wait screen, request timeouts, bigger thumbnails
+- H.264 360p is hidden on S60 3rd and 5th Edition, where it plays as sound only
+- Downloads: no repeated server rounds, cut-off downloads are reported as failed, error pages are not saved as videos, an earlier complete file is never deleted by a failed retry
+- Every request has a time limit
+- The crash log keeps rolling in long sessions
+- A failed server-list update is retried on the next start

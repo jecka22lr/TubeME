@@ -84,6 +84,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         // first-run default: S60 plays MPEG-4 up to 640x360 but H.264 only to QVGA
         if (Util.isSymbian()) settings.quality = Api.Q_MP4V_360;
         settings.load(api);
+        // only offer qualities this phone can show; move a saved one that is no longer offered
+        qIds = Api.qualities(System.getProperty("microedition.platform"));
+        qNames = new String[qIds.length];
+        for (int i = 0; i < qIds.length; i++) qNames[i] = Api.Q_NAMES[qIds[i]];
+        if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
         api.progress = this;
         Log.add("TubeME " + Api.VERSION + " on " + System.getProperty("microedition.platform"));
         Log.add("symbian=" + Util.isSymbian() + " files=" + Util.hasFiles() + " mmapi=" + System.getProperty("microedition.media.version")
@@ -115,6 +120,17 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 }
             }
         }).start();
+    }
+
+    private int[] qIds;
+    private String[] qNames;
+
+    /** Position of a quality id in the offered list, or -1. */
+    private int qIndex(int id) {
+        for (int i = 0; i < qIds.length; i++) {
+            if (qIds[i] == id) return i;
+        }
+        return -1;
     }
 
     protected void pauseApp() {
@@ -274,15 +290,15 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 skip = lastNext;
                 play();
             } else if (c == cQuality) {
-                qualityList = new List("Quality", Choice.IMPLICIT, Api.Q_NAMES, null);
-                qualityList.setSelectedIndex(settings.quality, true);
+                qualityList = new List("Quality", Choice.IMPLICIT, qNames, null);
+                qualityList.setSelectedIndex(qIndex(settings.quality), true);
                 qualityList.addCommand(cBack);
                 qualityList.setCommandListener(this);
                 show(qualityList);
             }
         } else if (d == qualityList) {
             if (c != cBack) {
-                settings.quality = qualityList.getSelectedIndex();
+                settings.quality = qIds[qualityList.getSelectedIndex()];
                 settings.save(api);
                 skip = 0;
             }
@@ -305,13 +321,6 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             else show(home());
         } else if (c == cBack) {
             show(home());
-        }
-    }
-
-    /** Says so up front when the chosen quality is one this phone is known not to show. */
-    private void codecNote() {
-        if (settings.quality == Api.Q_H264 && Util.h264OnlyQvga(System.getProperty("microedition.platform"))) {
-            say("Note: this phone only decodes H.264 up to 320x240, so 360p will likely be sound without picture. MPEG-4 360p is the one to use.");
         }
     }
 
@@ -353,8 +362,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         settingsForm = new Form("Settings");
         sMode = new ChoiceGroup("Playback", Choice.POPUP, Settings.MODE_NAMES, null);
         sMode.setSelectedIndex(settings.mode, true);
-        sQuality = new ChoiceGroup("Quality", Choice.POPUP, Api.Q_NAMES, null);
-        sQuality.setSelectedIndex(settings.quality, true);
+        sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames, null);
+        sQuality.setSelectedIndex(qIndex(settings.quality), true);
         sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
         sOpts.setSelectedIndex(0, settings.thumbs);
         sList = new TextField("Server list URL", settings.listUrl, 200, TextField.URL);
@@ -374,7 +383,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
 
     private void saveSettings() {
         settings.mode = sMode.getSelectedIndex();
-        settings.quality = sQuality.getSelectedIndex();
+        settings.quality = qIds[sQuality.getSelectedIndex()];
         settings.thumbs = sOpts.isSelected(0);
         String l = sList.getString().trim();
         settings.listUrl = l.length() == 0 ? Api.DEFAULT_LIST_URL : l;
@@ -395,6 +404,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.append(new StringItem("Auto playback", Settings.MODE_NAMES[mode()]));
         f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
                 + api.invidious.size() + " Invidious"));
+        if (qIds.length < Api.Q_NAMES.length) {
+            f.append(new StringItem("H.264 360p", "not offered: this platform decodes H.264 only up to 320x240"));
+        }
         f.append(new StringItem("Memory", (Runtime.getRuntime().totalMemory() / 1024) + " KB"));
         f.addCommand(cBack);
         f.setCommandListener(this);
@@ -583,17 +595,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         }
     }
 
+    private boolean listTried;
+
     /** Refreshes the shared server list now and then. Never fatal. */
-    private void freshServers(int g) {
+    private synchronized void freshServers(int g) {
         long now = System.currentTimeMillis();
         if (settings.lastUpdate != 0 && now - settings.lastUpdate < UPDATE_EVERY) return;
+        // one attempt per session; a failed one is not recorded as an update,
+        // so the next start tries again instead of waiting three days
+        if (listTried) return;
+        listTried = true;
         try {
             api.updateInstances(settings.listUrl);
+            settings.lastUpdate = now;
+            settings.save(api);
         } catch (Throwable t) {
-            // keep what we have; try again next session, not on every request
+            Log.err("server list", t);
         }
-        settings.lastUpdate = now;
-        settings.save(api);
     }
 
     private void doThumb(Video v) throws Exception {
@@ -630,16 +648,20 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (v == null) return;
         int m = mode();
         Log.add("play mode=" + m + " q=" + settings.quality + " skip=" + skip);
-        codecNote();
         // Test before handing over: a player given a link it can't use fails
         // without telling us why, so try the link ourselves and move on if it's bad.
         Api.Stream s = null;
         String why = null;
         int tries = 0;
+        Vector seen = new Vector();
         do {
             s = api.stream(v, settings.quality, skip);
+            // the server list wraps around: stop once it hands back one already tried
+            if (seen.contains(s.server)) break;
+            seen.addElement(s.server);
             lastNext = s.next;
             Log.add("stream " + s.url);
+            why = null;
             if (!s.probe) break;
             say("Testing the link from " + Api.host(s.server));
             why = Net.probe(s.url);
@@ -693,7 +715,6 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         Video v = cur;
         if (v == null) return;
         Log.add("download q=" + settings.quality + " skip=" + skip + " thenPlay=" + thenPlay);
-        codecNote();
         say("Checking the download folder");
         String folder = dir();
         if (g != gen) return;
@@ -702,23 +723,39 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         Exception last = null;
         // a server can hand out a URL and still fail to deliver: walk the list
         int tries = 0;
-        do {
+        Vector seen = new Vector();
+        while (g == gen) {
             try {
                 s = api.stream(v, settings.quality, skip);
-                lastNext = s.next;
+            } catch (Exception e) {
+                // stream() has already been through every server; asking again only repeats the waits
+                last = e;
+                break;
+            }
+            // the server list wraps around: stop once it hands back one already tried
+            if (seen.contains(s.server)) break;
+            seen.addElement(s.server);
+            lastNext = s.next;
+            try {
                 say("Connecting to " + Api.host(s.server));
                 Log.add("dl open " + s.url);
-                c = Net.open(s.url);
+                // a ready file answers at once; a YtAPILegacy conversion sends nothing until it is finished
+                c = Net.open(s.url, s.probe ? 60000 : Api.CONVERT_TIMEOUT);
+                String type = c.getType();
+                if (type != null && (type.startsWith("text/") || type.indexOf("json") >= 0)) {
+                    throw new Exception("sent " + type + " instead of video");
+                }
+                break;
             } catch (Exception e) {
-                Log.err("dl open", e);
-                if (s != null) say(Api.host(s.server) + ": " + Api.msg(e));
-                last = e;
+                Net.close(c);
                 c = null;
-                if (s == null) break;
+                Log.err("dl open", e);
+                say(Api.host(s.server) + ": " + Api.msg(e));
+                last = e;
                 skip = s.next;
             }
-            tries++;
-        } while (c == null && tries < api.streamServers() && g == gen);
+            if (++tries >= api.streamServers()) break;
+        }
         if (g != gen) {
             Net.close(c);
             return;
@@ -729,13 +766,14 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         InputStream in = null;
         OutputStream out = null;
         long done = 0;
-        boolean ok = false;
+        boolean ok = false, created = false;
         try {
             long len = c.getLength();
             Log.add("dl connected len=" + len + " type=" + c.getType() + " -> " + path);
             say(len > 0 ? "Downloading " + (len / 1024) + " KB" : "Downloading (size unknown)");
             int step = 0;
             out = Files.openOut(path);
+            created = true;
             in = c.openInputStream();
             Log.add("dl streams open");
             byte[] buf = new byte[4096];
@@ -774,15 +812,20 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 }
             }
             Log.add("dl done " + done + "b");
-            say("Download finished");
             if (done == 0) throw new Exception("Server sent an empty video");
+            // a dropped connection ends the read loop just like the end of the file does
+            if (len > 0 && done < len) {
+                throw new Exception("Download stopped at " + (done / 1024) + " of " + (len / 1024) + " KB");
+            }
+            say("Download finished");
             ok = true;
         } finally {
             try { if (in != null) in.close(); } catch (Throwable t) {}
             try { if (out != null) out.close(); } catch (Throwable t) {}
             Files.closeOut();
             Net.close(c);
-            if (!ok) Files.delete(path);
+            // only remove what this attempt wrote, never an earlier complete download
+            if (!ok && created) Files.delete(path);
         }
         if (g != gen) return;
         savedPath = path;
