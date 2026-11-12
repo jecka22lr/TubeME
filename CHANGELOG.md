@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Servers are used in order of reply time from the last test (fastest first, untested next, down
+  last), and the Servers screen is sorted the same way
+
 ## 0.1.3
 
 - Server test on every start: each known server is checked from the phone, unreachable ones go to the

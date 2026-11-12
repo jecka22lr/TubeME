@@ -141,6 +141,23 @@ public class Tests {
         eq(Net.mp4Layout(fast, fast.length), "boxes=ftyp,mdat", "mp4 layout index at end");
         eq(Net.mp4Layout(fast, 4), "boxes=?", "mp4 layout short");
 
+        // --- fastest server first ---
+        Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
+        rk.yt2009.addElement(Y); rk.yt2009.addElement(YBAD); rk.invidious.addElement(INV);
+        rk.markGood(L); rk.ms.put(L, "500"); rk.markGood(Y); rk.ms.put(Y, "20"); rk.markGood(INV); rk.ms.put(INV, "90");
+        rk.ping(GONE);
+        for (int i = 0; i < 5; i++) {
+            Video rv = new Video(); rv.id = "abcDEF_-00" + i;
+            eq(rk.stream(rv, Api.Q_MP4V, 0).server, Y, "fastest server streams first, run " + i);
+        }
+        Vector sv = rk.servers();
+        eq(((String[]) sv.elementAt(0))[1], Y, "server list: fastest first");
+        eq(((String[]) sv.elementAt(1))[1], INV, "server list: second fastest");
+        eq(((String[]) sv.elementAt(2))[1], L, "server list: slowest tested");
+        eq(((String[]) sv.elementAt(3))[1], YBAD, "server list: untested after tested");
+        eq(((String[]) sv.elementAt(4))[1], GONE, "server list: down last");
+        eq(((Video) rk.search("x").elementAt(0)).source, L, "metadata prefers YtAPILegacy while it is up");
+
         // --- files: folder pick, .ram, download to file ---
         new java.io.File("/tmp/tubefs/E:").mkdirs();
         String dir = Files.pickDir("");

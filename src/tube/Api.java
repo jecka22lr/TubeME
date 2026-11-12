@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.3";
+    static final String VERSION = "0.1.4";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -39,7 +39,7 @@ final class Api {
     private final Hashtable good = new Hashtable();
     private final Hashtable dead = new Hashtable();
 
-    private void markGood(String base) {
+    void markGood(String base) {
         good.put(base, "");
         dead.remove(base);
     }
@@ -73,7 +73,7 @@ final class Api {
     }
 
     /** Reply time of the last check per server, in ms. */
-    private final Hashtable ms = new Hashtable();
+    final Hashtable ms = new Hashtable();
 
     /** Every known server as { kind, base }. */
     Vector servers() {
@@ -82,7 +82,7 @@ final class Api {
         for (int i = 0; i < legacy.size(); i++) add(v, "YtAPILegacy", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "yt2009", (String) yt2009.elementAt(i));
         for (int i = 0; i < invidious.size(); i++) add(v, "Invidious", (String) invidious.elementAt(i));
-        return v;
+        return ranked(v, 0);
     }
 
     /** Checks one server from this phone, on this connection. Any HTTP answer counts as up. */
@@ -124,14 +124,36 @@ final class Api {
         return t == null ? "ok" : "ok " + t + " ms";
     }
 
-    /** Moves servers that already failed this session to the back. */
-    private Vector deadLast(Vector in) {
+    /** Lower is better: measured reply time, then answered-but-untimed, then untested, then down. */
+    private long score(String base) {
+        if (dead.containsKey(base)) return Long.MAX_VALUE;
+        if (!good.containsKey(base)) return 2000000;
+        Object t = ms.get(base);
+        if (t == null) return 1000000;
+        try {
+            return Long.parseLong((String) t);
+        } catch (Exception e) {
+            return 1000000;
+        }
+    }
+
+    /**
+     * Sorts { kind, base } entries from index from on: fastest reply first,
+     * untested after the tested ones, servers that failed last. Stable, so
+     * the random order survives among equals.
+     */
+    private Vector ranked(Vector in, int from) {
         Vector out = new Vector();
-        for (int pass = 0; pass < 2; pass++) {
-            for (int k = 0; k < in.size(); k++) {
-                String[] e = (String[]) in.elementAt(k);
-                if (dead.containsKey(e[1]) == (pass == 1)) out.addElement(e);
+        for (int k = 0; k < in.size(); k++) {
+            Object e = in.elementAt(k);
+            if (k < from) {
+                out.addElement(e);
+                continue;
             }
+            long sc = score(((String[]) e)[1]);
+            int at = out.size();
+            while (at > from && score(((String[]) out.elementAt(at - 1))[1]) > sc) at--;
+            out.insertElementAt(e, at);
         }
         return out;
     }
@@ -208,10 +230,23 @@ final class Api {
     private Vector metaOrder() {
         Vector v = new Vector();
         add(v, "L", Util.cleanBase(custom));
-        add(v, "L", lastGood);
-        addShuffled(v, legacy, "L");
-        addShuffled(v, invidious, "I");
-        return deadLast(v);
+        // YtAPILegacy before Invidious (it can also convert), each group fastest first
+        Vector l = new Vector();
+        add(l, "L", lastGood);
+        addShuffled(l, legacy, "L");
+        l = ranked(l, 0);
+        Vector i = new Vector();
+        addShuffled(i, invidious, "I");
+        i = ranked(i, 0);
+        // a YtAPILegacy server that is down drops behind working Invidious ones
+        for (int pass = 0; pass < 2; pass++) {
+            for (int k = 0; k < l.size(); k++) {
+                String[] e = (String[]) l.elementAt(k);
+                if (dead.containsKey(e[1]) == (pass == 1)) add(v, e[0], e[1]);
+            }
+            if (pass == 0) for (int k = 0; k < i.size(); k++) add(v, "I", ((String[]) i.elementAt(k))[1]);
+        }
+        return v;
     }
 
     // ---- metadata ----
@@ -367,7 +402,7 @@ final class Api {
         Vector out = new Vector();
         add(out, "L", Util.cleanBase(custom));
         add(out, "L", v.source);
-        add(out, "L", lastGood);
+        int pinned = out.size();
         Vector mix = new Vector();
         addShuffled(mix, legacy, "L");
         addShuffled(mix, yt2009, "Y");
@@ -378,7 +413,7 @@ final class Api {
                 if (e[1].startsWith("https") == (pass == 1)) add(out, e[0], e[1]);
             }
         }
-        out = deadLast(out);
+        out = ranked(out, pinned);
         if (quality == Q_H264 && v.stream != null && v.stream.length() > 0) {
             out.addElement(new String[] { "D", v.stream });
         }
