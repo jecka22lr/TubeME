@@ -67,6 +67,9 @@ public class Tests {
         eq(v.description, "line1\nline2 \u00e9", "info description"); eq(v.views, "4242", "info views");
         eq(Api.thumbUrl(v, 240), L + "/thumbnail/abcDEF_-001?quality=default", "thumb small");
         eq(Api.thumbUrl(v, 360), L + "/thumbnail/abcDEF_-001?quality=medium", "thumb medium");
+        Video it = new Video(); it.thumb = INV + "/vi/abcDEF_-001/default.jpg";
+        eq(Api.thumbUrl(it, 360), INV + "/vi/abcDEF_-001/mqdefault.jpg", "invidious thumb bigger on wide screens");
+        eq(Api.thumbUrl(it, 240), INV + "/vi/abcDEF_-001/default.jpg", "invidious thumb small on small screens");
         ok(Net.get(Api.thumbUrl(v, 240), 80000)[1] == 'P', "thumb fetch");
 
         // --- invidious fallback when every YtAPILegacy server is down ---
@@ -124,7 +127,11 @@ public class Tests {
         // --- server test: sweep, status, pre-play probe ---
         Api sw = new Api(); sw.legacy = new Vector(); sw.legacy.addElement(GONE); sw.legacy.addElement(L);
         sw.yt2009.addElement(Y); sw.invidious.addElement(INV);
-        eq(Integer.valueOf(sw.sweep()), Integer.valueOf(3), "sweep counts live servers");
+        eq(Integer.valueOf(sw.sweep(true)), Integer.valueOf(3), "sweep counts live servers");
+        Api many = new Api(); many.legacy = new Vector(); many.legacy.addElement(L);
+        for (int i = 0; i < 9; i++) many.invidious.addElement(INV + "/x" + i);
+        eq(Integer.valueOf(many.sweep(false)), Integer.valueOf(1 + Api.ENOUGH_INVIDIOUS), "quick sweep stops after enough Invidious servers");
+        eq(Integer.valueOf(many.sweep(true)), Integer.valueOf(10), "full sweep tests all");
         eq(sw.status(GONE), "down", "status down");
         ok(!sw.ping(DEAD), "a server answering 500 counts as down");
         ok(sw.status(L).startsWith("ok ") && sw.status(L).endsWith(" ms"), "status ok with time: " + sw.status(L));
@@ -140,6 +147,18 @@ public class Tests {
         fast[20] = 'm'; fast[21] = 'd'; fast[22] = 'a'; fast[23] = 't';
         eq(Net.mp4Layout(fast, fast.length), "boxes=ftyp,mdat", "mp4 layout index at end");
         eq(Net.mp4Layout(fast, 4), "boxes=?", "mp4 layout short");
+
+        // --- a server that never answers is given up on, with the steps reported ---
+        final Vector said = new Vector();
+        Api slow = new Api(); slow.legacy = new Vector(); slow.yt2009.addElement(Y);
+        slow.progress = new Api.Progress() { public void say(String l) { said.addElement(l); } };
+        long t1 = System.currentTimeMillis();
+        threw = false; try { Net.redirect(Y + "/slow", 1000); } catch (java.io.IOException e) { threw = e.getMessage().equals("no answer after 1 s"); }
+        ok(threw && System.currentTimeMillis() - t1 < 2500, "hung request times out");
+        eq(Net.redirect(Y + "/slow", 8000), Y + "/assets/late.bin", "slow request inside the limit still works");
+        slow.stream(wv, Api.Q_MP4V, 0);
+        ok(((String) said.elementAt(0)).startsWith("Asking 127.0.0.1:18083 to get the video ready"), "progress line: " + said.elementAt(0));
+        eq(Api.host("http://a.b:81/x"), "a.b:81", "host of url");
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);

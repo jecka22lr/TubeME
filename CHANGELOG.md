@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5
+
+- The wait screen lists what is happening line by line: which server is being asked, failures and
+  the switch to the next server, then "Downloading 5%", "10%"... (every 256 KB when the server
+  gives no size)
+- A server that never answers no longer hangs a download forever: yt2009 gets 90 s to get a video
+  ready, a ping gets 8 s, then the next server is tried
+- Bigger thumbnails (320x180) from Invidious servers on screens 320 px or wider
+- The start-up server test checks every video server but stops after 5 working Invidious servers
+  (the list has dozens); Servers > Test still checks all of them
+
 ## 0.1.4
 
 - Servers are used in order of reply time from the last test (fastest first, untested next, down

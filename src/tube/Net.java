@@ -75,8 +75,71 @@ final class Net {
      * Asks url where it redirects to, without downloading the target.
      * yt2009 answers its conversion endpoints with a Location header.
      */
-    static String redirect(String url) throws IOException {
-        HttpConnection c = raw(url);
+    static String redirect(String url, long timeoutMs) throws IOException {
+        return (String) timed(1, url, timeoutMs);
+    }
+
+    /**
+     * Runs a request on a helper thread and gives up after timeoutMs. MIDP
+     * has no socket timeouts, and a server that never answers would
+     * otherwise hang the task forever with nothing on screen.
+     */
+    private static Object timed(int kind, String url, long timeoutMs) throws IOException {
+        Job j = new Job(kind, url);
+        new Thread(j).start();
+        long end = System.currentTimeMillis() + timeoutMs;
+        synchronized (j) {
+            while (!j.done) {
+                long left = end - System.currentTimeMillis();
+                if (left <= 0) break;
+                try {
+                    j.wait(left);
+                } catch (InterruptedException e) {
+                }
+            }
+            if (!j.done) {
+                j.abandoned = true;
+                close(j.c);
+                throw new IOException("no answer after " + (timeoutMs / 1000) + " s");
+            }
+        }
+        if (j.error != null) {
+            if (j.error instanceof IOException) throw (IOException) j.error;
+            throw new IOException(j.error.toString());
+        }
+        return j.result;
+    }
+
+    private static final class Job implements Runnable {
+        private final int kind;
+        private final String url;
+        HttpConnection c;
+        Object result;
+        Throwable error;
+        boolean done, abandoned;
+
+        Job(int kind, String url) {
+            this.kind = kind;
+            this.url = url;
+        }
+
+        public void run() {
+            try {
+                c = raw(url);
+                result = kind == 0 ? (Object) new Integer(c.getResponseCode()) : redirectOf(c, url);
+            } catch (Throwable t) {
+                error = t;
+            } finally {
+                close(c);
+            }
+            synchronized (this) {
+                done = true;
+                notifyAll();
+            }
+        }
+    }
+
+    private static String redirectOf(HttpConnection c, String url) throws IOException {
         try {
             int code = c.getResponseCode();
             if (code >= 300 && code < 400) {
@@ -96,13 +159,8 @@ final class Net {
     }
 
     /** Response code of url without following redirects or reading the body. Any answer means the server is up. */
-    static int code(String url) throws IOException {
-        HttpConnection c = raw(url);
-        try {
-            return c.getResponseCode();
-        } finally {
-            close(c);
-        }
+    static int code(String url, long timeoutMs) throws IOException {
+        return ((Integer) timed(0, url, timeoutMs)).intValue();
     }
 
     /**

@@ -23,7 +23,7 @@ import javax.microedition.lcdui.TextField;
 import javax.microedition.midlet.MIDlet;
 
 /** UI and flow. All network and file work happens on worker threads. */
-public class TubeMIDlet extends MIDlet implements CommandListener {
+public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress {
     private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
             T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
@@ -82,6 +82,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         display = Display.getDisplay(this);
         Log.init();
         settings.load(api);
+        api.progress = this;
         Log.add("TubeME " + Api.VERSION + " on " + System.getProperty("microedition.platform"));
         Log.add("symbian=" + Util.isSymbian() + " files=" + Util.hasFiles() + " mmapi=" + System.getProperty("microedition.media.version")
                 + " heap=" + (Runtime.getRuntime().totalMemory() / 1024) + "K mode=" + settings.mode + " q=" + settings.quality);
@@ -106,7 +107,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             public void run() {
                 try {
                     freshServers(0);
-                    api.sweep();
+                    api.sweep(false);
                 } catch (Throwable t) {
                     Log.err("startup sweep", t);
                 }
@@ -152,10 +153,28 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             waitForm.append(waitText);
             waitForm.addCommand(cCancel);
             waitForm.setCommandListener(this);
-        } else {
-            waitText.setText(what);
         }
+        waitLines.removeAllElements();
+        say(what);
         show(waitForm);
+    }
+
+    private final Vector waitLines = new Vector();
+
+    /**
+     * Adds a line to the wait screen (newest at the bottom, last few kept),
+     * so a long wait shows what is going on instead of one frozen sentence.
+     */
+    public synchronized void say(String line) {
+        if (waitText == null) return;
+        waitLines.addElement(line);
+        while (waitLines.size() > 7) waitLines.removeElementAt(0);
+        StringBuffer b = new StringBuffer();
+        for (int i = 0; i < waitLines.size(); i++) {
+            if (i > 0) b.append('\n');
+            b.append((String) waitLines.elementAt(i));
+        }
+        waitText.setText(b.toString());
     }
 
     private void run(int kind, Object arg, String what) {
@@ -518,13 +537,14 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                         int n = api.updateInstances(settings.listUrl);
                         settings.lastUpdate = System.currentTimeMillis();
                         settings.save(api);
-                        api.sweep();
+                        say("Testing servers...");
+                        api.sweep(false);
                         if (g != gen) return;
                         showServers();
                         break;
                     }
                     case T_SWEEP:
-                        api.sweep();
+                        api.sweep(true);
                         if (g != gen) return;
                         showServers();
                         break;
@@ -611,15 +631,16 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             lastNext = s.next;
             Log.add("stream " + s.url);
             if (!s.probe) break;
-            waitText.setText("Testing " + s.server.substring(s.server.indexOf("://") + 3) + "...");
+            say("Testing the link from " + Api.host(s.server));
             why = Net.probe(s.url);
             if (why == null) break;
+            say("Link is no good: " + why);
             skip = s.next;
             tries++;
         } while (tries < api.streamServers() && g == gen);
         if (why != null) throw new Exception("No server could deliver this video (" + why + ")");
         if (g != gen) return;
-        waitText.setText("Opening player...");
+        say("Opening player");
         if (m == Settings.MODE_INAPP) {
             startPlayer(s.url);
             return;
@@ -662,6 +683,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         Video v = cur;
         if (v == null) return;
         Log.add("download q=" + settings.quality + " skip=" + skip + " thenPlay=" + thenPlay);
+        say("Checking the download folder");
         String folder = dir();
         if (g != gen) return;
         HttpConnection c = null;
@@ -673,11 +695,12 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             try {
                 s = api.stream(v, settings.quality, skip);
                 lastNext = s.next;
-                waitText.setText("Connecting to " + s.server.substring(s.server.indexOf("://") + 3) + "\n(conversion can take a minute)");
+                say("Connecting to " + Api.host(s.server));
                 Log.add("dl open " + s.url);
                 c = Net.open(s.url);
             } catch (Exception e) {
                 Log.err("dl open", e);
+                if (s != null) say(Api.host(s.server) + ": " + Api.msg(e));
                 last = e;
                 c = null;
                 if (s == null) break;
@@ -699,7 +722,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         try {
             long len = c.getLength();
             Log.add("dl connected len=" + len + " type=" + c.getType() + " -> " + path);
-            waitText.setText("Downloading...");
+            say(len > 0 ? "Downloading " + (len / 1024) + " KB" : "Downloading (size unknown)");
+            int step = 0;
             out = Files.openOut(path);
             in = c.openInputStream();
             Log.add("dl streams open");
@@ -722,14 +746,24 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                 if (done - mark >= 32768) {
                     mark = done;
                     if (len > 0) {
-                        waitText.setText("Downloading " + (done / 1024) + " / " + (len / 1024) + " KB ("
-                                + (done * 100 / len) + "%)");
+                        // a new line every 5%
+                        int pct = (int) (done * 100 / len) / 5;
+                        if (pct > step) {
+                            step = pct;
+                            say("Downloading " + (pct * 5) + "%");
+                        }
                     } else {
-                        waitText.setText("Downloading " + (done / 1024) + " KB");
+                        // no size from the server: a new line every 256 KB
+                        int kb = (int) (done / 262144);
+                        if (kb > step) {
+                            step = kb;
+                            say("Downloading " + (done / 1024) + " KB");
+                        }
                     }
                 }
             }
             Log.add("dl done " + done + "b");
+            say("Download finished");
             if (done == 0) throw new Exception("Server sent an empty video");
             ok = true;
         } finally {

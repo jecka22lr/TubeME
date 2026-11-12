@@ -2,7 +2,7 @@
 """Mock YtAPILegacy / yt2009 / Invidious servers + the shared instance list.
 Made-up videos only. Prints a CHECK line per endpoint hit; exits 1 if any expected one is missing."""
 import json, sys, threading, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 HITS = set()
@@ -73,6 +73,8 @@ class H(BaseHTTPRequestHandler):
             if p in ("/http_3gp_288", "/http_mpeg4", "/http_mpeg4_360", "/channel_fh264_getvideo"):
                 self.hit("yt2009" + p)
                 return self.send(302, b"", headers={"Location": "/assets/%s%s.bin" % (q["v"][0], p.replace("/", "-"))})
+            if p == "/slow":
+                time.sleep(4); return self.send(302, b"", headers={"Location": "/assets/late.bin"})
             if p.startswith("/assets/"):
                 self.hit("yt2009-file"); return self.send(200, VIDEO, "video/mp4")
         if port == INV:

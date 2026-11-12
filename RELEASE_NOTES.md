@@ -1,5 +1,6 @@
-Servers sorted by ping. Playback is still unconfirmed on a real phone.
+After the second C6-00 test. Downloads and playback are still unconfirmed on a real phone.
 
-- Servers are used fastest-first, by the reply time measured from the phone; untested ones come next and servers that are down last
-- The Servers screen is sorted the same way
-- Includes 0.1.3: server test on every start, links checked before a player gets them
+- Wait screen shows each step and download progress in 5% lines
+- Timeouts: 90 s for a server to get a video ready, 8 s for a ping, then the next server
+- Bigger thumbnails from Invidious servers
+- Faster start-up server test (stops after 5 working Invidious servers)

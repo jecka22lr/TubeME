@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.4";
+    static final String VERSION = "0.1.5";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -26,6 +26,29 @@ final class Api {
     static final String[] Q_NAMES = {
         "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p"
     };
+
+    /** How long a yt2009 server gets to fetch/convert a video before we move on. */
+    static long PREPARE_TIMEOUT = 90000;
+    static long PING_TIMEOUT = 8000;
+
+    /** Gets one line per step worth showing the user. */
+    interface Progress {
+        void say(String line);
+    }
+
+    Progress progress;
+
+    private void say(String line) {
+        Progress p = progress;
+        if (p != null) p.say(line);
+    }
+
+    static String host(String base) {
+        int i = base.indexOf("://");
+        String h = i < 0 ? base : base.substring(i + 3);
+        int j = h.indexOf('/');
+        return j < 0 ? h : h.substring(0, j);
+    }
 
     Vector legacy = new Vector();
     Vector yt2009 = new Vector();
@@ -89,7 +112,7 @@ final class Api {
     boolean ping(String base) {
         long t = System.currentTimeMillis();
         try {
-            int code = Net.code(base + "/health");
+            int code = Net.code(base + "/health", PING_TIMEOUT);
             // 404 is fine (older servers have no /health); 5xx means it's up but broken
             if (code >= 500) throw new Exception("HTTP " + code);
             long took = System.currentTimeMillis() - t;
@@ -105,16 +128,34 @@ final class Api {
         }
     }
 
-    /** Checks every known server. Returns how many answered. */
-    int sweep() {
-        Vector v = servers();
-        int up = 0;
+    /**
+     * Checks servers from this phone. Video servers (YtAPILegacy, yt2009) are
+     * always all tested. Invidious lists run to dozens and only a few are
+     * needed for search, so unless full is set testing stops once enough
+     * of them answered. Returns how many answered.
+     */
+    int sweep(boolean full) {
+        int up = 0, tested = 0, invUp = 0;
+        Vector v = new Vector();
+        add(v, "L", Util.cleanBase(custom));
+        for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
+        for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
+        addShuffled(v, invidious, "I");
         for (int i = 0; i < v.size(); i++) {
-            if (ping(((String[]) v.elementAt(i))[1])) up++;
+            String[] e = (String[]) v.elementAt(i);
+            boolean inv = e[0].equals("I");
+            if (inv && !full && invUp >= ENOUGH_INVIDIOUS) break;
+            tested++;
+            if (ping(e[1])) {
+                up++;
+                if (inv) invUp++;
+            }
         }
-        Log.add("sweep " + up + "/" + v.size() + " up");
+        Log.add("sweep " + up + "/" + tested + " up, " + (v.size() - tested) + " not tested");
         return up;
     }
+
+    static final int ENOUGH_INVIDIOUS = 5;
 
     /** "ok 320 ms", "down" or "not tested". */
     String status(String base) {
@@ -394,7 +435,10 @@ final class Api {
     /** Thumbnail URL sized for the screen (YtAPILegacy scales server-side). */
     static String thumbUrl(Video v, int screenWidth) {
         if (v.thumb.length() == 0) return "";
-        if (v.thumb.indexOf("/thumbnail/") >= 0) return v.thumb + "?quality=" + (screenWidth >= 320 ? "medium" : "default");
+        boolean big = screenWidth >= 320;
+        if (v.thumb.indexOf("/thumbnail/") >= 0) return v.thumb + "?quality=" + (big ? "medium" : "default");
+        // Invidious: default.jpg is 120x90, mqdefault.jpg 320x180
+        if (big && v.thumb.endsWith("/default.jpg")) return v.thumb.substring(0, v.thumb.length() - 11) + "mqdefault.jpg";
         return v.thumb;
     }
 
@@ -464,11 +508,14 @@ final class Api {
                     else if (quality == Q_MP4V) path = "/http_mpeg4?v=";
                     else if (quality == Q_MP4V_360) path = "/http_mpeg4_360?v=";
                     else path = "/channel_fh264_getvideo?v=";
-                    s.url = Net.redirect(e[1] + path + v.id);
+                    say("Asking " + host(e[1]) + " to get the video ready (up to " + (PREPARE_TIMEOUT / 1000) + " s)");
+                    Log.add("ask " + e[1] + path + v.id);
+                    s.url = Net.redirect(e[1] + path + v.id, PREPARE_TIMEOUT);
                 }
                 return s;
             } catch (Exception ex) {
                 Log.err("stream " + e[1], ex);
+                say(host(e[1]) + ": " + msg(ex));
                 last = ex;
             }
         }
