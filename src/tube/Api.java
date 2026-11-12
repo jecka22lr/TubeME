@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.1";
+    static final String VERSION = "0.1.2";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -35,6 +35,54 @@ final class Api {
 
     /** Last YtAPILegacy server that answered. */
     private String lastGood;
+    /** Servers seen answering / failing this session (base URL keys). */
+    private final Hashtable good = new Hashtable();
+    private final Hashtable dead = new Hashtable();
+
+    private void markGood(String base) {
+        good.put(base, "");
+        dead.remove(base);
+    }
+
+    private void markDead(String base) {
+        dead.put(base, "");
+        good.remove(base);
+    }
+
+    /**
+     * Is this server reachable? YtAPILegacy video links are built without
+     * asking the server, so check before handing one to a player: a player
+     * given a dead address fails in ways we never see.
+     */
+    private boolean alive(String base) {
+        if (good.containsKey(base)) return true;
+        if (dead.containsKey(base)) return false;
+        try {
+            Net.get(base + "/health", 4000);
+            markGood(base);
+        } catch (Exception e) {
+            String m = e.getMessage();
+            // an HTTP error still means somebody is home (older servers lack /health)
+            if (m != null && m.startsWith("HTTP ")) markGood(base);
+            else {
+                Log.err("health " + base, e);
+                markDead(base);
+            }
+        }
+        return good.containsKey(base);
+    }
+
+    /** Moves servers that already failed this session to the back. */
+    private Vector deadLast(Vector in) {
+        Vector out = new Vector();
+        for (int pass = 0; pass < 2; pass++) {
+            for (int k = 0; k < in.size(); k++) {
+                String[] e = (String[]) in.elementAt(k);
+                if (dead.containsKey(e[1]) == (pass == 1)) out.addElement(e);
+            }
+        }
+        return out;
+    }
 
     Api() {
         legacy.addElement(DEFAULT_LEGACY);
@@ -109,7 +157,7 @@ final class Api {
         add(v, "L", lastGood);
         addShuffled(v, legacy, "L");
         addShuffled(v, invidious, "I");
-        return v;
+        return deadLast(v);
     }
 
     // ---- metadata ----
@@ -140,9 +188,11 @@ final class Api {
                     if (v != null) out.addElement(v);
                 }
                 if (leg) lastGood = e[1];
+                markGood(e[1]);
                 return out;
             } catch (Exception ex) {
                 Log.err("list " + e[1], ex);
+                markDead(e[1]);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
             }
@@ -164,6 +214,7 @@ final class Api {
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
                 Log.err("info " + e[1], ex);
+                markDead(e[1]);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;
@@ -179,6 +230,7 @@ final class Api {
                 last = new Exception(err.length() > 0 ? err : "Video unavailable");
                 continue;
             }
+            markGood(e[1]);
             if (leg) {
                 lastGood = e[1];
                 v.published = Json.str(o, "published_at");
@@ -308,6 +360,7 @@ final class Api {
                 if (e[0].equals("D")) {
                     s.url = e[1];
                 } else if (e[0].equals("L")) {
+                    if (!alive(e[1])) throw new Exception("server unreachable");
                     String u = e[1] + "/direct_url?video_id=" + v.id;
                     if (quality == Q_H263) u += "&codec=h263";
                     else if (quality == Q_H264) u += "&quality=360";

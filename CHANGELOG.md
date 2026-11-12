@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- The wait screen is one plain text form reused for every task (no animated gauges). The app being
+  closed by the phone after a few tasks on the C6-00 pointed at those
+- Servers that fail are remembered for the session and tried last; a YtAPILegacy server is checked
+  for reachability before its video link is handed to a player (an unreachable one crashed RealPlayer)
+- .ram files rotate through four names so a file RealPlayer still holds is never replaced
+- Auto playback is now "Download, then play" wherever there is file access, Symbian included
+- Thumbnails no longer depend on a heap check that was wrong on S60
+- More log lines: download progress, HTTP errors, free memory
+
 ## 0.1.1
 
 - Log screen in the main menu: a trace of what the app did (servers, stream URL, folder probing, player

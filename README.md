@@ -9,8 +9,8 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 
 | Mode | What it does | Auto picks it when |
 |---|---|---|
-| RealPlayer (Symbian) | writes a one-line `.ram` file and opens it, so RealPlayer streams the video | running on S60 |
-| Download, then play | saves to the memory card, then plays the file | JSR-75 is there |
+| RealPlayer (Symbian) | writes a one-line `.ram` file and opens it, so RealPlayer streams the video | never (manual; hasn't played on a C6-00 yet) |
+| Download, then play | saves to the memory card, then plays the file (with the phone's own player on Symbian) | JSR-75 is there |
 | In-app player | MMAPI (JSR-135) inside the app | no file access, video supported |
 | Phone's player/browser | `platformRequest` with the stream URL | nothing else works |
 

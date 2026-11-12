@@ -106,12 +106,18 @@ public class Tests {
         eq(Integer.valueOf(Net.get(Y + "/http_mpeg4?v=abcDEF_-001", 200000).length), Integer.valueOf(76800), "manual redirect follow");
 
         // --- "other server" walks the list and wraps ---
-        Api walk = new Api(); walk.legacy = api.legacy; walk.yt2009 = new Vector(); walk.yt2009.addElement(Y);
+        String GONE = "http://127.0.0.1:18099"; // nothing listens here: like a host the phone can't reach
+        Api walk = new Api(); walk.legacy = new Vector(); walk.legacy.addElement(GONE); walk.legacy.addElement(L);
+        walk.yt2009 = new Vector(); walk.yt2009.addElement(Y);
         Video wv = new Video(); wv.id = "abcDEF_-001";
         Hashtable seen = new Hashtable(); int skip = 0;
         for (int i = 0; i < 6; i++) { Api.Stream s = walk.stream(wv, Api.Q_MP4V, skip); seen.put(s.server, ""); skip = s.next; }
         eq(Integer.valueOf(walk.streamServers()), Integer.valueOf(3), "stream server count");
-        eq(Integer.valueOf(seen.size()), Integer.valueOf(3), "other-server visits all");
+        eq(Integer.valueOf(seen.size()), Integer.valueOf(2), "other-server visits every live server");
+        ok(!seen.containsKey(GONE), "unreachable YtAPILegacy server never handed to a player");
+        Api goneOnly = new Api(); goneOnly.legacy = new Vector(); goneOnly.legacy.addElement(GONE);
+        threw = false; try { goneOnly.stream(wv, Api.Q_H263, 0); } catch (Exception e) { threw = e.getMessage().indexOf("unreachable") >= 0; }
+        ok(threw, "unreachable server reported instead of returned");
         Api.Stream d1 = inv.stream(iv, Api.Q_H264, 1);
         eq(d1.url, iv.stream, "invidious direct stream as last resort");
 
@@ -122,8 +128,9 @@ public class Tests {
         threw = false; try { Files.pickDir("file:///DENY/"); } catch (Exception e) { threw = true; }
         ok(!threw, "bad preferred folder falls back");
         String ram = Files.writeRam(dir, "http://x/y?a=1&b=2");
-        eq(ram, "file:///E:/tubeme.ram", "ram path");
-        eq(new String(java.nio.file.Files.readAllBytes(new java.io.File("/tmp/tubefs/E:/tubeme.ram").toPath())), "http://x/y?a=1&b=2\n", "ram content");
+        eq(ram, "file:///E:/tubeme1.ram", "ram path");
+        eq(new String(java.nio.file.Files.readAllBytes(new java.io.File("/tmp/tubefs/E:/tubeme1.ram").toPath())), "http://x/y?a=1&b=2\n", "ram content");
+        eq(Files.writeRam(dir, "http://x/z"), "file:///E:/tubeme2.ram", "ram name rotates");
         HttpConnection c = Net.open(only.stream(v, Api.Q_H263, 0).url);
         ok(c.getLength() <= 0, "conversion stream has no length");
         java.io.OutputStream out = Files.openOut(dir + "TubeME_x.3gp"); java.io.InputStream in = c.openInputStream();

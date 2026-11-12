@@ -14,7 +14,6 @@ import javax.microedition.lcdui.CommandListener;
 import javax.microedition.lcdui.Display;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.Form;
-import javax.microedition.lcdui.Gauge;
 import javax.microedition.lcdui.Image;
 import javax.microedition.lcdui.Item;
 import javax.microedition.lcdui.List;
@@ -52,7 +51,6 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
 
     private Form waitForm;
     private StringItem waitText;
-    private Gauge waitGauge;
 
     private final Command cBack = new Command("Back", Command.BACK, 2);
     private final Command cExit = new Command("Exit", Command.EXIT, 3);
@@ -128,22 +126,27 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         display.setCurrent(a, next);
     }
 
-    /** Shows the busy screen. known=true gives a 0..100 bar instead of a spinner. */
-    private void busy(String what, boolean known) {
-        waitForm = new Form("Please wait");
-        waitGauge = known ? new Gauge(null, false, 100, 0)
-                : new Gauge(null, false, Gauge.INDEFINITE, Gauge.CONTINUOUS_RUNNING);
-        waitText = new StringItem(null, what);
-        waitForm.append(waitText);
-        waitForm.append(waitGauge);
-        waitForm.addCommand(cCancel);
-        waitForm.setCommandListener(this);
+    /**
+     * Shows the busy screen. It is one plain text form, made once and reused:
+     * building a new form with an animated gauge per task is the prime
+     * suspect for the app being killed on S60 after a few tasks.
+     */
+    private void busy(String what) {
+        if (waitForm == null) {
+            waitForm = new Form("Please wait");
+            waitText = new StringItem(null, what);
+            waitForm.append(waitText);
+            waitForm.addCommand(cCancel);
+            waitForm.setCommandListener(this);
+        } else {
+            waitText.setText(what);
+        }
         show(waitForm);
     }
 
     private void run(int kind, Object arg, String what) {
         int g = ++gen;
-        busy(what, false);
+        busy(what);
         new Thread(new Task(kind, arg, g)).start();
     }
 
@@ -287,8 +290,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         int m = settings.mode;
         boolean files = Util.hasFiles();
         if (m == Settings.MODE_AUTO) {
-            if (Util.isSymbian()) m = Settings.MODE_REAL;
-            else if (files) m = Settings.MODE_DOWNLOAD;
+            // RealPlayer is happiest with a file on the card; streaming stays a manual choice
+            if (files) m = Settings.MODE_DOWNLOAD;
+            else if (Util.isSymbian()) m = Settings.MODE_EXTERNAL;
             else if (hasVideoPlayer()) m = Settings.MODE_INAPP;
             else m = Settings.MODE_EXTERNAL;
         }
@@ -395,8 +399,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         f.setCommandListener(this);
         videoForm = f;
         show(f);
-        // thumbnails cost a decoded image; skip them on tiny heaps
-        if (settings.thumbs && Runtime.getRuntime().totalMemory() >= 1500000) {
+        // (no heap check: totalMemory() is only the current heap on S60, not the limit;
+        // a failed decode is caught and logged by the task)
+        if (settings.thumbs) {
             new Thread(new Task(T_THUMB, v, g)).start();
         }
     }
@@ -522,7 +527,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
     private void doThumb(Video v) throws Exception {
         String u = Api.thumbUrl(v, display.getCurrent() == null ? 240 : display.getCurrent().getWidth());
         if (u.length() == 0) return;
-        Log.add("thumb " + u);
+        Log.add("thumb " + u + " free=" + (Runtime.getRuntime().freeMemory() / 1024) + "K");
         byte[] d = Net.get(u, 80000);
         Image img = Image.createImage(d, 0, d.length);
         Log.add("thumb ok " + d.length + "b " + img.getWidth() + "x" + img.getHeight());
@@ -557,6 +562,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         lastNext = s.next;
         Log.add("stream " + s.url);
         if (g != gen) return;
+        waitText.setText("Opening player...");
         if (m == Settings.MODE_INAPP) {
             startPlayer(s.url);
             return;
@@ -598,6 +604,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
     private void doDownload(int g, boolean thenPlay) throws Exception {
         Video v = cur;
         if (v == null) return;
+        Log.add("download q=" + settings.quality + " skip=" + skip + " thenPlay=" + thenPlay);
         String folder = dir();
         if (g != gen) return;
         HttpConnection c = null;
@@ -635,11 +642,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         try {
             long len = c.getLength();
             Log.add("dl connected len=" + len + " type=" + c.getType() + " -> " + path);
-            if (len > 0) {
-                busy("Downloading...", true);
-            } else {
-                waitText.setText("Downloading...");
-            }
+            waitText.setText("Downloading...");
             out = Files.openOut(path);
             in = c.openInputStream();
             Log.add("dl streams open");
@@ -647,19 +650,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
             int n;
             long mark = 0;
             boolean first = true;
+            long logMark = 0;
             while ((n = in.read(buf)) > 0) {
                 if (g != gen) return;
                 if (first) {
                     first = false;
                     Log.add("dl first bytes");
+                } else if (done - logMark >= 262144) {
+                    logMark = done;
+                    Log.add("dl " + (done / 1024) + "K");
                 }
                 out.write(buf, 0, n);
                 done += n;
                 if (done - mark >= 32768) {
                     mark = done;
                     if (len > 0) {
-                        waitGauge.setValue((int) (done * 100 / len));
-                        waitText.setText("Downloading " + (done / 1024) + " / " + (len / 1024) + " KB");
+                        waitText.setText("Downloading " + (done / 1024) + " / " + (len / 1024) + " KB ("
+                                + (done * 100 / len) + "%)");
                     } else {
                         waitText.setText("Downloading " + (done / 1024) + " KB");
                     }

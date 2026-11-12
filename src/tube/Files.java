@@ -108,18 +108,32 @@ final class Files {
      * the URL inside, which skips the browser detour an http link would take.
      */
     static String writeRam(String dir, String streamUrl) throws Exception {
-        String path = dir + "tubeme.ram";
-        FileConnection fc = create(path);
-        try {
-            OutputStream o = fc.openOutputStream();
-            o.write(streamUrl.getBytes());
-            o.write('\n');
-            o.close();
-        } finally {
-            fc.close();
+        // The player may still hold the last .ram open, so rotate through a
+        // few names instead of replacing the one it is reading.
+        Exception last = null;
+        for (int i = 0; i < 4; i++) {
+            ramNo = ramNo % 4 + 1;
+            String path = dir + "tubeme" + ramNo + ".ram";
+            try {
+                FileConnection fc = create(path);
+                try {
+                    OutputStream o = fc.openOutputStream();
+                    o.write(Log.bytes(streamUrl));
+                    o.write('\n');
+                    o.close();
+                } finally {
+                    fc.close();
+                }
+                return path;
+            } catch (Exception e) {
+                Log.err("ram " + path, e);
+                last = e;
+            }
         }
-        return path;
+        throw last;
     }
+
+    private static int ramNo;
 
     static void delete(String url) {
         try {

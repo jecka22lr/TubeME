@@ -42,6 +42,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"invidious": ["http://127.0.0.1:%d/" % INV], "piped": ["https://piped.invalid"],
                     "yt2009": ["http://127.0.0.1:%d" % Y09BAD, "http://127.0.0.1:%d" % Y09],
                     "ytapilegacy": ["http://127.0.0.1:%d" % DEAD, "http://127.0.0.1:%d" % LEG]})
+            if p == "/health":
+                self.hit("health"); return self.send(200, {"status": "ok"})
             if p == "/get_search_videos.php":
                 self.hit("legacy-search:" + q["query"][0])
                 return self.send(200, [{"video_id": vid(i), "title": "Tést \"vidéo\" №%d \U0001F600" % i, "author": "Canal Ç",
@@ -92,7 +94,7 @@ def main():
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

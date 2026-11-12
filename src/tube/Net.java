@@ -35,7 +35,10 @@ final class Net {
             if (code >= 200 && code < 300) return c;
             String loc = (code >= 300 && code < 400) ? c.getHeaderField("Location") : null;
             close(c);
-            if (loc == null) throw new IOException("HTTP " + code);
+            if (loc == null) {
+                Log.add("http " + code + " " + url);
+                throw new IOException("HTTP " + code);
+            }
             url = Util.resolve(url, loc);
         }
         throw new IOException("Too many redirects");
