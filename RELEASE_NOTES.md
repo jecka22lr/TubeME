@@ -1,6 +1,5 @@
-After the second C6-00 test. Downloads and playback are still unconfirmed on a real phone.
+Codec defaults from Nokia's published specs. Downloads and playback are still unconfirmed on a real phone.
 
-- Wait screen shows each step and download progress in 5% lines
-- Timeouts: 90 s for a server to get a video ready, 8 s for a ping, then the next server
-- Bigger thumbnails from Invidious servers
-- Faster start-up server test (stops after 5 working Invidious servers)
+- Symbian default quality is MPEG-4 360p (S60 3rd/5th Edition decode MPEG-4 to VGA/nHD, H.264 only to QVGA)
+- A note appears when H.264 360p is chosen on a phone that can't show it
+- Includes 0.1.5: step-by-step wait screen, request timeouts, bigger thumbnails

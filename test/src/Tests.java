@@ -43,6 +43,14 @@ public class Tests {
         eq(Api.niceDuration("PT16M21S"), "16:21", "iso duration");
         eq(Api.niceDuration("3:21"), "3:21", "plain duration");
 
+        String c6 = "NokiaC6-00/40.0.021/sw_platform=S60;sw_platform_version=5.0;java_build_version=1.4.48";
+        eq(Util.s60Version(c6), "5.0", "s60 version");
+        ok(Util.h264OnlyQvga(c6), "S60 5th: H.264 only QVGA");
+        ok(Util.h264OnlyQvga("NokiaN82/31.0.016/sw_platform=S60;sw_platform_version=3.1"), "S60 3.1: H.264 only QVGA");
+        ok(!Util.h264OnlyQvga("NokiaN8-00/111.030.0609/sw_platform=S60;sw_platform_version=5.3;java_build_version=2.2.54"), "Symbian^3+: no limit note");
+        ok(!Util.h264OnlyQvga("SonyEricssonK800i/R1KG001"), "non-Symbian: no note");
+        ok(!Util.h264OnlyQvga(null), "no platform: no note");
+
         // --- instance list ---
         Api api = new Api();
         eq(Integer.valueOf(api.updateInstances(L + "/notPipe.json")), Integer.valueOf(5), "instance list count");

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6
+
+- Default quality on Symbian is MPEG-4 360p: per Nokia's specs, S60 3rd/5th Edition phones decode
+  MPEG-4 up to VGA/nHD but H.264 only up to QVGA (README has the table)
+- Choosing H.264 360p on such a phone shows a note on the wait screen that it will likely be sound
+  without picture
+
 ## 0.1.5
 
 - The wait screen lists what is happening line by line: which server is being asked, failures and

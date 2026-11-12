@@ -165,6 +165,27 @@ final class Util {
         return sb.toString();
     }
 
+    /** S60 platform version out of microedition.platform ("5.0", "3.2"...), or null. */
+    static String s60Version(String platform) {
+        if (platform == null) return null;
+        String key = "sw_platform_version=";
+        int i = platform.indexOf(key);
+        if (i < 0) return null;
+        int from = i + key.length(), to = from;
+        while (to < platform.length() && platform.charAt(to) != ';') to++;
+        return platform.substring(from, to).trim();
+    }
+
+    /**
+     * S60 3rd Edition and 5th Edition phones only decode H.264 up to about
+     * QVGA (Nokia's own 5800 sheet: "MPEG4-AVC playback 30fps QVGA", while
+     * MPEG-4 SP goes to VGA/nHD). Symbian^3 and later report 5.2 and up.
+     */
+    static boolean h264OnlyQvga(String platform) {
+        String v = s60Version(platform);
+        return v != null && (v.startsWith("3.") || v.equals("5.0") || v.equals("5.1"));
+    }
+
     /** JSR-75 present? Lives here so asking doesn't load the Files class. */
     static boolean hasFiles() {
         return System.getProperty("microedition.io.file.FileConnection.version") != null;

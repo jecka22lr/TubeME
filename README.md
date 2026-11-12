@@ -16,6 +16,19 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 
 Quality: H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p (default tier is MPEG-4), H.264 360p.
 
+## What Symbian phones can decode
+
+From Nokia's published specs, which is why the default on Symbian is MPEG-4 360p:
+
+| Platform | MPEG-4 (Simple Profile) | H.264 |
+|---|---|---|
+| S60 3rd Edition FP1/FP2 (N95, N82) | up to VGA 30 fps | about QVGA; some firmware rejects sizes that aren't multiples of 16 |
+| S60 5th Edition (5800, N97, C6-00) | up to VGA / nHD 640x360 30 fps | QVGA 30 fps only (Baseline, up to level 2) |
+
+So on these phones H.264 360p plays as sound without picture, and H.263 288p (CIF) or MPEG-4 are the
+safe choices. Sources: Nokia 5800 XpressMusic specification sheet, Microsoft's "Media on Nokia S60"
+codec table, LPCWiki's Nokia C6-00 page, and a first-hand N95 review on OSNews.
+
 ## Servers
 
 Every start the app checks which servers this phone can reach (Menu > Servers shows the result and can

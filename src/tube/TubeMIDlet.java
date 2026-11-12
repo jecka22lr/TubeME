@@ -81,6 +81,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         started = true;
         display = Display.getDisplay(this);
         Log.init();
+        // first-run default: S60 plays MPEG-4 up to 640x360 but H.264 only to QVGA
+        if (Util.isSymbian()) settings.quality = Api.Q_MP4V_360;
         settings.load(api);
         api.progress = this;
         Log.add("TubeME " + Api.VERSION + " on " + System.getProperty("microedition.platform"));
@@ -303,6 +305,13 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             else show(home());
         } else if (c == cBack) {
             show(home());
+        }
+    }
+
+    /** Says so up front when the chosen quality is one this phone is known not to show. */
+    private void codecNote() {
+        if (settings.quality == Api.Q_H264 && Util.h264OnlyQvga(System.getProperty("microedition.platform"))) {
+            say("Note: this phone only decodes H.264 up to 320x240, so 360p will likely be sound without picture. MPEG-4 360p is the one to use.");
         }
     }
 
@@ -621,6 +630,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (v == null) return;
         int m = mode();
         Log.add("play mode=" + m + " q=" + settings.quality + " skip=" + skip);
+        codecNote();
         // Test before handing over: a player given a link it can't use fails
         // without telling us why, so try the link ourselves and move on if it's bad.
         Api.Stream s = null;
@@ -683,6 +693,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         Video v = cur;
         if (v == null) return;
         Log.add("download q=" + settings.quality + " skip=" + skip + " thenPlay=" + thenPlay);
+        codecNote();
         say("Checking the download folder");
         String folder = dir();
         if (g != gen) return;
