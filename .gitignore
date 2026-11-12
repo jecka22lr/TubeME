@@ -1,0 +1,10 @@
+build/
+dist/
+tools/*.jar
+tools/proguard-*/
+*.class
+test/emu/microemu/
+test/emu/build/
+test/emu/home/
+shots/
+test/emu/tour/

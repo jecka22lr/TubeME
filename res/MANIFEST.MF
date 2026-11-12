@@ -1,0 +1,11 @@
+Manifest-Version: 1.0
+MIDlet-1: TubeME, /icon.png, tube.TubeMIDlet
+MIDlet-Name: TubeME
+MIDlet-Vendor: jecka22lr
+MIDlet-Version: @VERSION@
+MIDlet-Icon: /icon.png
+MIDlet-Description: YouTube client for J2ME
+MIDlet-Permissions-Opt: javax.microedition.io.Connector.http, javax.microedition.io.Connector.https, javax.microedition.io.Connector.file.read, javax.microedition.io.Connector.file.write
+Nokia-MIDlet-Category: Application
+MicroEdition-Configuration: CLDC-1.1
+MicroEdition-Profile: MIDP-2.0

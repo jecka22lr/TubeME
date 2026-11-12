@@ -1,0 +1,624 @@
+package tube;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Vector;
+
+import javax.microedition.io.HttpConnection;
+import javax.microedition.lcdui.Alert;
+import javax.microedition.lcdui.AlertType;
+import javax.microedition.lcdui.Choice;
+import javax.microedition.lcdui.ChoiceGroup;
+import javax.microedition.lcdui.Command;
+import javax.microedition.lcdui.CommandListener;
+import javax.microedition.lcdui.Display;
+import javax.microedition.lcdui.Displayable;
+import javax.microedition.lcdui.Form;
+import javax.microedition.lcdui.Gauge;
+import javax.microedition.lcdui.Image;
+import javax.microedition.lcdui.ImageItem;
+import javax.microedition.lcdui.Item;
+import javax.microedition.lcdui.List;
+import javax.microedition.lcdui.StringItem;
+import javax.microedition.lcdui.TextBox;
+import javax.microedition.lcdui.TextField;
+import javax.microedition.midlet.MIDlet;
+
+/** UI and flow. All network and file work happens on worker threads. */
+public class TubeMIDlet extends MIDlet implements CommandListener {
+    private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8;
+    private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
+
+    private Display display;
+    private final Api api = new Api();
+    private final Settings settings = new Settings();
+    private boolean started;
+
+    private List menu;
+    private List results;
+    private Vector items = new Vector();
+    private Form videoForm;
+    private Video cur;
+    /** The in-app player screen while one is open (a PlayerCanvas, kept untyped on purpose). */
+    private Displayable player;
+
+    /** Bumped whenever the user cancels or moves on; stale workers check it and stop. */
+    private int gen;
+    /** Which server to start from; "Other server" moves it on. */
+    private int skip;
+    private int lastNext;
+    private String savedPath;
+    private String dirOk;
+
+    private Form waitForm;
+    private StringItem waitText;
+    private Gauge waitGauge;
+
+    private final Command cBack = new Command("Back", Command.BACK, 2);
+    private final Command cExit = new Command("Exit", Command.EXIT, 3);
+    private final Command cOk = new Command("OK", Command.OK, 1);
+    private final Command cCancel = new Command("Cancel", Command.CANCEL, 1);
+    private final Command cPlay = new Command("Play", Command.OK, 1);
+    private final Command cDownload = new Command("Save", "Download", Command.SCREEN, 2);
+    private final Command cOther = new Command("Server", "Other server", Command.SCREEN, 3);
+    private final Command cQuality = new Command("Quality", Command.SCREEN, 4);
+    private final Command cSave = new Command("Save", Command.OK, 1);
+    private final Command cPlayFile = new Command("Play", Command.OK, 1);
+
+    private TextBox searchBox;
+    private TextBox idBox;
+    private Form settingsForm;
+    private ChoiceGroup sMode, sQuality, sOpts;
+    private TextField sList, sCustom, sDir;
+    private List qualityList;
+    private Form savedForm;
+
+    protected void startApp() {
+        if (started) return;
+        started = true;
+        display = Display.getDisplay(this);
+        settings.load(api);
+        // optional JAD/manifest overrides, so servers can be changed without rebuilding
+        String p = getAppProperty("TubeME-List-URL");
+        if (p != null && p.trim().length() > 0 && settings.listUrl.equals(Api.DEFAULT_LIST_URL)) settings.listUrl = p.trim();
+        p = getAppProperty("TubeME-Server");
+        if (p != null && p.trim().length() > 0 && api.custom.length() == 0) api.custom = p.trim();
+        menu = new List("TubeME", Choice.IMPLICIT);
+        menu.append("Search", null);
+        menu.append("Popular", null);
+        menu.append("Open ID or link", null);
+        menu.append("Settings", null);
+        menu.append("Update servers", null);
+        menu.append("About", null);
+        menu.addCommand(cExit);
+        menu.setCommandListener(this);
+        display.setCurrent(menu);
+    }
+
+    protected void pauseApp() {
+    }
+
+    protected void destroyApp(boolean unconditional) {
+        gen++;
+        if (player != null) PlayerCanvas.stop(player);
+    }
+
+    // ---- small UI helpers ----
+
+    private void show(Displayable d) {
+        display.setCurrent(d);
+    }
+
+    private void alert(String title, String text, Displayable next) {
+        Alert a = new Alert(title, text, null, AlertType.ERROR);
+        a.setTimeout(Alert.FOREVER);
+        display.setCurrent(a, next);
+    }
+
+    private void info(String title, String text, Displayable next) {
+        Alert a = new Alert(title, text, null, AlertType.INFO);
+        a.setTimeout(Alert.FOREVER);
+        display.setCurrent(a, next);
+    }
+
+    /** Shows the busy screen. known=true gives a 0..100 bar instead of a spinner. */
+    private void busy(String what, boolean known) {
+        waitForm = new Form("Please wait");
+        waitGauge = known ? new Gauge(null, false, 100, 0)
+                : new Gauge(null, false, Gauge.INDEFINITE, Gauge.CONTINUOUS_RUNNING);
+        waitText = new StringItem(null, what);
+        waitForm.append(waitText);
+        waitForm.append(waitGauge);
+        waitForm.addCommand(cCancel);
+        waitForm.setCommandListener(this);
+        show(waitForm);
+    }
+
+    private void run(int kind, Object arg, String what) {
+        int g = ++gen;
+        busy(what, false);
+        new Thread(new Task(kind, arg, g)).start();
+    }
+
+    private Displayable home() {
+        if (videoForm != null && cur != null) return videoForm;
+        if (results != null) return results;
+        return menu;
+    }
+
+    // ---- commands ----
+
+    public void commandAction(Command c, Displayable d) {
+        if (d == menu) {
+            if (c == cExit) {
+                destroyApp(true);
+                notifyDestroyed();
+                return;
+            }
+            switch (menu.getSelectedIndex()) {
+                case 0:
+                    if (searchBox == null) {
+                        searchBox = new TextBox("Search", "", 100, TextField.ANY);
+                        searchBox.addCommand(cOk);
+                        searchBox.addCommand(cBack);
+                        searchBox.setCommandListener(this);
+                    }
+                    show(searchBox);
+                    break;
+                case 1:
+                    run(T_POPULAR, null, "Loading popular videos...");
+                    break;
+                case 2:
+                    if (idBox == null) {
+                        idBox = new TextBox("Video ID or link", "", 200, TextField.ANY);
+                        idBox.addCommand(cOk);
+                        idBox.addCommand(cBack);
+                        idBox.setCommandListener(this);
+                    }
+                    show(idBox);
+                    break;
+                case 3:
+                    showSettings();
+                    break;
+                case 4:
+                    run(T_UPDATE, null, "Updating server list...");
+                    break;
+                case 5:
+                    showAbout();
+                    break;
+            }
+        } else if (d == searchBox) {
+            if (c == cOk && searchBox.getString().trim().length() > 0) {
+                run(T_SEARCH, searchBox.getString().trim(), "Searching...");
+            } else {
+                show(menu);
+            }
+        } else if (d == idBox) {
+            if (c == cOk) {
+                String id = Util.videoId(idBox.getString());
+                if (id == null) alert("Not a video", "That doesn't look like a video ID or link.", idBox);
+                else {
+                    results = null;
+                    run(T_INFO, id, "Loading video...");
+                }
+            } else {
+                show(menu);
+            }
+        } else if (d == results) {
+            if (c == cBack) {
+                results = null;
+                show(menu);
+            } else {
+                int i = results.getSelectedIndex();
+                if (i >= 0 && i < items.size()) run(T_INFO, items.elementAt(i), "Loading video...");
+            }
+        } else if (d == videoForm) {
+            if (c == cBack) {
+                gen++;
+                videoForm = null;
+                cur = null;
+                show(results != null ? (Displayable) results : menu);
+            } else if (c == cPlay) {
+                play();
+            } else if (c == cDownload) {
+                run(T_DOWNLOAD, Boolean.FALSE, "Preparing download...");
+            } else if (c == cOther) {
+                skip = lastNext;
+                play();
+            } else if (c == cQuality) {
+                qualityList = new List("Quality", Choice.IMPLICIT, Api.Q_NAMES, null);
+                qualityList.setSelectedIndex(settings.quality, true);
+                qualityList.addCommand(cBack);
+                qualityList.setCommandListener(this);
+                show(qualityList);
+            }
+        } else if (d == qualityList) {
+            if (c != cBack) {
+                settings.quality = qualityList.getSelectedIndex();
+                settings.save(api);
+                skip = 0;
+            }
+            show(home());
+        } else if (d == waitForm) {
+            gen++;
+            show(home());
+        } else if (d == settingsForm) {
+            if (c == cSave) saveSettings();
+            show(menu);
+        } else if (d == savedForm) {
+            if (c == cPlayFile && savedPath != null) run(T_PLAYFILE, savedPath, "Opening...");
+            else show(home());
+        } else if (c == cBack) {
+            show(home());
+        }
+    }
+
+    private void play() {
+        if (mode() == Settings.MODE_DOWNLOAD) run(T_DOWNLOAD, Boolean.TRUE, "Preparing download...");
+        else run(T_PLAY, null, "Finding a server...");
+    }
+
+    // ---- capability checks ----
+
+    private static boolean hasVideoPlayer() {
+        if (System.getProperty("microedition.media.version") == null) return false;
+        try {
+            return PlayerCanvas.hasVideo();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** What "Auto" turns into on this phone. */
+    private int mode() {
+        int m = settings.mode;
+        boolean files = Util.hasFiles();
+        if (m == Settings.MODE_AUTO) {
+            if (Util.isSymbian()) m = Settings.MODE_REAL;
+            else if (files) m = Settings.MODE_DOWNLOAD;
+            else if (hasVideoPlayer()) m = Settings.MODE_INAPP;
+            else m = Settings.MODE_EXTERNAL;
+        }
+        if (m == Settings.MODE_REAL && !files) m = Settings.MODE_EXTERNAL;
+        if (m == Settings.MODE_DOWNLOAD && !files) m = hasVideoPlayer() ? Settings.MODE_INAPP : Settings.MODE_EXTERNAL;
+        return m;
+    }
+
+    // ---- screens ----
+
+    private void showSettings() {
+        settingsForm = new Form("Settings");
+        sMode = new ChoiceGroup("Playback", Choice.POPUP, Settings.MODE_NAMES, null);
+        sMode.setSelectedIndex(settings.mode, true);
+        sQuality = new ChoiceGroup("Quality", Choice.POPUP, Api.Q_NAMES, null);
+        sQuality.setSelectedIndex(settings.quality, true);
+        sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
+        sOpts.setSelectedIndex(0, settings.thumbs);
+        sList = new TextField("Server list URL", settings.listUrl, 200, TextField.URL);
+        sCustom = new TextField("My YtAPILegacy server (optional)", api.custom, 200, TextField.URL);
+        sDir = new TextField("Download folder (empty = auto)", settings.dir, 200, TextField.ANY);
+        settingsForm.append(sMode);
+        settingsForm.append(sQuality);
+        settingsForm.append(sOpts);
+        settingsForm.append(sList);
+        settingsForm.append(sCustom);
+        settingsForm.append(sDir);
+        settingsForm.addCommand(cSave);
+        settingsForm.addCommand(cBack);
+        settingsForm.setCommandListener(this);
+        show(settingsForm);
+    }
+
+    private void saveSettings() {
+        settings.mode = sMode.getSelectedIndex();
+        settings.quality = sQuality.getSelectedIndex();
+        settings.thumbs = sOpts.isSelected(0);
+        String l = sList.getString().trim();
+        settings.listUrl = l.length() == 0 ? Api.DEFAULT_LIST_URL : l;
+        api.custom = sCustom.getString().trim();
+        String d = sDir.getString().trim();
+        if (!d.equals(settings.dir)) dirOk = null;
+        settings.dir = d;
+        settings.save(api);
+    }
+
+    private void showAbout() {
+        Form f = new Form("About");
+        f.append(new StringItem(null, "TubeME " + Api.VERSION + "\nYouTube for J2ME through YtAPILegacy, yt2009 and Invidious servers.\n"));
+        f.append(new StringItem("Platform", String.valueOf(System.getProperty("microedition.platform"))));
+        f.append(new StringItem("Symbian", Util.isSymbian() ? "yes" : "no"));
+        f.append(new StringItem("File access", Util.hasFiles() ? "yes" : "no"));
+        f.append(new StringItem("In-app video", hasVideoPlayer() ? "yes" : "no"));
+        f.append(new StringItem("Auto playback", Settings.MODE_NAMES[mode()]));
+        f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
+                + api.invidious.size() + " Invidious"));
+        f.append(new StringItem("Memory", (Runtime.getRuntime().totalMemory() / 1024) + " KB"));
+        f.addCommand(cBack);
+        f.setCommandListener(this);
+        show(f);
+    }
+
+    private void showResults(String title, Vector v) {
+        items = v;
+        results = new List(title, Choice.IMPLICIT);
+        for (int i = 0; i < v.size(); i++) results.append(((Video) v.elementAt(i)).line(), null);
+        try {
+            results.setFitPolicy(Choice.TEXT_WRAP_ON);
+        } catch (Throwable t) {
+        }
+        results.addCommand(cBack);
+        results.setCommandListener(this);
+        show(results);
+    }
+
+    private void showVideo(Video v, int g) {
+        cur = v;
+        skip = 0;
+        lastNext = 0;
+        Form f = new Form(v.title.length() > 0 ? v.title : v.id);
+        f.append(new StringItem(null, v.title + "\n"));
+        if (v.author.length() > 0) f.append(new StringItem("By", v.author));
+        if (v.duration.length() > 0) f.append(new StringItem("Length", v.duration));
+        if (v.views.length() > 0) f.append(new StringItem("Views", v.views));
+        if (v.published.length() > 0) f.append(new StringItem("Published", v.published));
+        String d = v.description;
+        if (d.length() > 600) d = d.substring(0, 600) + "...";
+        if (d.length() > 0) f.append(new StringItem(null, "\n" + d));
+        f.addCommand(cPlay);
+        if (Util.hasFiles()) f.addCommand(cDownload);
+        f.addCommand(cQuality);
+        f.addCommand(cOther);
+        f.addCommand(cBack);
+        f.setCommandListener(this);
+        videoForm = f;
+        show(f);
+        // thumbnails cost a decoded image; skip them on tiny heaps
+        if (settings.thumbs && Runtime.getRuntime().totalMemory() >= 1500000) {
+            new Thread(new Task(T_THUMB, v, g)).start();
+        }
+    }
+
+    void playerClosed() {
+        player = null;
+        show(home());
+    }
+
+    private void showSaved(String path, long bytes) {
+        savedPath = path;
+        savedForm = new Form("Saved");
+        savedForm.append(new StringItem(null, (bytes / 1024) + " KB saved to\n" + path.substring(8)));
+        savedForm.addCommand(cPlayFile);
+        savedForm.addCommand(cBack);
+        savedForm.setCommandListener(this);
+        show(savedForm);
+    }
+
+    // ---- workers ----
+
+    private final class Task implements Runnable {
+        private final int kind;
+        private final Object arg;
+        private final int g;
+
+        Task(int kind, Object arg, int g) {
+            this.kind = kind;
+            this.arg = arg;
+            this.g = g;
+        }
+
+        public void run() {
+            try {
+                switch (kind) {
+                    case T_SEARCH: {
+                        freshServers(g);
+                        Vector v = api.search((String) arg);
+                        if (g != gen) return;
+                        if (v.size() == 0) info("Search", "Nothing found.", menu);
+                        else showResults((String) arg, v);
+                        break;
+                    }
+                    case T_POPULAR: {
+                        freshServers(g);
+                        Vector v = api.popular();
+                        if (g != gen) return;
+                        if (v.size() == 0) info("Popular", "The server returned no videos.", menu);
+                        else showResults("Popular", v);
+                        break;
+                    }
+                    case T_INFO: {
+                        freshServers(g);
+                        String id = arg instanceof Video ? ((Video) arg).id : (String) arg;
+                        Video v = api.info(id);
+                        if (g != gen) return;
+                        if (arg instanceof Video) {
+                            // search results sometimes know more than the info call
+                            Video s = (Video) arg;
+                            if (v.duration.length() == 0) v.duration = s.duration;
+                            if (v.author.length() == 0) v.author = s.author;
+                        }
+                        showVideo(v, g);
+                        break;
+                    }
+                    case T_PLAY:
+                        doPlay(g);
+                        break;
+                    case T_DOWNLOAD:
+                        doDownload(g, ((Boolean) arg).booleanValue());
+                        break;
+                    case T_PLAYFILE:
+                        playFile((String) arg);
+                        break;
+                    case T_UPDATE: {
+                        int n = api.updateInstances(settings.listUrl);
+                        settings.lastUpdate = System.currentTimeMillis();
+                        settings.save(api);
+                        if (g != gen) return;
+                        info("Servers", n + " servers known.", menu);
+                        break;
+                    }
+                    case T_THUMB:
+                        doThumb((Video) arg);
+                        break;
+                }
+            } catch (Throwable t) {
+                if (kind == T_THUMB || g != gen) return;
+                alert("Error", Api.msg(t), home());
+            }
+        }
+    }
+
+    /** Refreshes the shared server list now and then. Never fatal. */
+    private void freshServers(int g) {
+        long now = System.currentTimeMillis();
+        if (settings.lastUpdate != 0 && now - settings.lastUpdate < UPDATE_EVERY) return;
+        try {
+            api.updateInstances(settings.listUrl);
+        } catch (Throwable t) {
+            // keep what we have; try again next session, not on every request
+        }
+        settings.lastUpdate = now;
+        settings.save(api);
+    }
+
+    private void doThumb(Video v) throws Exception {
+        String u = Api.thumbUrl(v, display.getCurrent() == null ? 240 : display.getCurrent().getWidth());
+        if (u.length() == 0) return;
+        byte[] d = Net.get(u, 80000);
+        Image img = Image.createImage(d, 0, d.length);
+        Form f = videoForm;
+        if (f != null && cur == v) f.insert(0, new ImageItem(null, img, Item.LAYOUT_CENTER | Item.LAYOUT_NEWLINE_AFTER, null));
+    }
+
+    private String dir() throws Exception {
+        if (dirOk == null) {
+            dirOk = Files.pickDir(settings.dir);
+            if (settings.dir.length() == 0) {
+                // remember it so the next start doesn't probe (and prompt) again
+                settings.dir = dirOk;
+                settings.save(api);
+            }
+        }
+        return dirOk;
+    }
+
+    private void doPlay(int g) throws Exception {
+        Video v = cur;
+        if (v == null) return;
+        int m = mode();
+        Api.Stream s = api.stream(v, settings.quality, skip);
+        lastNext = s.next;
+        if (g != gen) return;
+        if (m == Settings.MODE_INAPP) {
+            startPlayer(s.url);
+            return;
+        }
+        String target = s.url;
+        if (m == Settings.MODE_REAL) {
+            try {
+                target = Files.writeRam(dir(), s.url);
+            } catch (Throwable t) {
+                // can't write the .ram: let the phone deal with the plain link
+                target = s.url;
+            }
+        }
+        launch(target);
+    }
+
+    private void startPlayer(String url) {
+        player = PlayerCanvas.start(this, url);
+        show(player);
+    }
+
+    /** Hands a URL or file to the phone. */
+    private void launch(String url) throws Exception {
+        boolean mustExit = platformRequest(url);
+        if (mustExit) info("Player", "Close TubeME and the video will open.", home());
+        else show(home());
+    }
+
+    private void playFile(String path) throws Exception {
+        if (!Util.isSymbian() && settings.mode != Settings.MODE_EXTERNAL && hasVideoPlayer()) startPlayer(path);
+        else launch(path);
+    }
+
+    private void doDownload(int g, boolean thenPlay) throws Exception {
+        Video v = cur;
+        if (v == null) return;
+        String folder = dir();
+        if (g != gen) return;
+        HttpConnection c = null;
+        Api.Stream s = null;
+        Exception last = null;
+        // a server can hand out a URL and still fail to deliver: walk the list
+        int tries = 0;
+        do {
+            try {
+                s = api.stream(v, settings.quality, skip);
+                lastNext = s.next;
+                waitText.setText("Connecting to " + s.server.substring(s.server.indexOf("://") + 3) + "\n(conversion can take a minute)");
+                c = Net.open(s.url);
+            } catch (Exception e) {
+                last = e;
+                c = null;
+                if (s == null) break;
+                skip = s.next;
+            }
+            tries++;
+        } while (c == null && tries < api.streamServers() && g == gen);
+        if (g != gen) {
+            Net.close(c);
+            return;
+        }
+        if (c == null) throw new Exception("Download failed: " + (last == null ? "no servers" : Api.msg(last)));
+
+        String path = folder + "TubeME_" + v.id + "." + s.ext;
+        InputStream in = null;
+        OutputStream out = null;
+        long done = 0;
+        boolean ok = false;
+        try {
+            long len = c.getLength();
+            if (len > 0) {
+                busy("Downloading...", true);
+            } else {
+                waitText.setText("Downloading...");
+            }
+            out = Files.openOut(path);
+            in = c.openInputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            long mark = 0;
+            while ((n = in.read(buf)) > 0) {
+                if (g != gen) return;
+                out.write(buf, 0, n);
+                done += n;
+                if (done - mark >= 32768) {
+                    mark = done;
+                    if (len > 0) {
+                        waitGauge.setValue((int) (done * 100 / len));
+                        waitText.setText("Downloading " + (done / 1024) + " / " + (len / 1024) + " KB");
+                    } else {
+                        waitText.setText("Downloading " + (done / 1024) + " KB");
+                    }
+                }
+            }
+            if (done == 0) throw new Exception("Server sent an empty video");
+            ok = true;
+        } finally {
+            try { if (in != null) in.close(); } catch (Throwable t) {}
+            try { if (out != null) out.close(); } catch (Throwable t) {}
+            Files.closeOut();
+            Net.close(c);
+            if (!ok) Files.delete(path);
+        }
+        if (g != gen) return;
+        savedPath = path;
+        if (thenPlay) {
+            showSaved(path, done);
+            playFile(path);
+        } else {
+            showSaved(path, done);
+        }
+    }
+}
