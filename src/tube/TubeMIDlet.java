@@ -25,7 +25,7 @@ import javax.microedition.midlet.MIDlet;
 /** UI and flow. All network and file work happens on worker threads. */
 public class TubeMIDlet extends MIDlet implements CommandListener {
     private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
-            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9;
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
 
     private Display display;
@@ -71,6 +71,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
     private List qualityList;
     private Form savedForm;
     private Form logForm;
+    private List serverList;
+    private final Command cTest = new Command("Test", "Test again", Command.OK, 1);
+    private final Command cUpdate = new Command("Update", "Update list", Command.SCREEN, 2);
     private final Command cLogFile = new Command("To file", "Save log to file", Command.SCREEN, 2);
 
     protected void startApp() {
@@ -92,12 +95,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         menu.append("Popular", null);
         menu.append("Open ID or link", null);
         menu.append("Settings", null);
-        menu.append("Update servers", null);
+        menu.append("Servers", null);
         menu.append("About", null);
         menu.append("Log", null);
         menu.addCommand(cExit);
         menu.setCommandListener(this);
         display.setCurrent(menu);
+        // every start: find out which servers this phone can actually reach right now
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    freshServers(0);
+                    api.sweep();
+                } catch (Throwable t) {
+                    Log.err("startup sweep", t);
+                }
+            }
+        }).start();
     }
 
     protected void pauseApp() {
@@ -191,7 +205,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                     showSettings();
                     break;
                 case 4:
-                    run(T_UPDATE, null, "Updating server list...");
+                    showServers();
                     break;
                 case 5:
                     showAbout();
@@ -258,6 +272,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         } else if (d == settingsForm) {
             if (c == cSave) saveSettings();
             show(menu);
+        } else if (d == serverList) {
+            if (c == cTest) run(T_SWEEP, null, "Testing servers...");
+            else if (c == cUpdate) run(T_UPDATE, null, "Updating server list...");
+            else if (c == cBack) show(menu);
         } else if (d == logForm) {
             if (c == cLogFile) run(T_LOGFILE, null, "Saving log...");
             else show(menu);
@@ -353,6 +371,25 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         f.addCommand(cBack);
         f.setCommandListener(this);
         show(f);
+    }
+
+    private void showServers() {
+        serverList = new List("Servers", Choice.IMPLICIT);
+        Vector v = api.servers();
+        for (int i = 0; i < v.size(); i++) {
+            String[] e = (String[]) v.elementAt(i);
+            String host = e[1].substring(e[1].indexOf("://") + 3);
+            serverList.append(api.status(e[1]) + " | " + host + " (" + e[0] + ")", null);
+        }
+        try {
+            serverList.setFitPolicy(Choice.TEXT_WRAP_ON);
+        } catch (Throwable t) {
+        }
+        serverList.setSelectCommand(cTest);
+        serverList.addCommand(cUpdate);
+        serverList.addCommand(cBack);
+        serverList.setCommandListener(this);
+        show(serverList);
     }
 
     private void showLog() {
@@ -481,10 +518,16 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
                         int n = api.updateInstances(settings.listUrl);
                         settings.lastUpdate = System.currentTimeMillis();
                         settings.save(api);
+                        api.sweep();
                         if (g != gen) return;
-                        info("Servers", n + " servers known.", menu);
+                        showServers();
                         break;
                     }
+                    case T_SWEEP:
+                        api.sweep();
+                        if (g != gen) return;
+                        showServers();
+                        break;
                     case T_THUMB:
                         doThumb((Video) arg);
                         break;
@@ -558,9 +601,23 @@ public class TubeMIDlet extends MIDlet implements CommandListener {
         if (v == null) return;
         int m = mode();
         Log.add("play mode=" + m + " q=" + settings.quality + " skip=" + skip);
-        Api.Stream s = api.stream(v, settings.quality, skip);
-        lastNext = s.next;
-        Log.add("stream " + s.url);
+        // Test before handing over: a player given a link it can't use fails
+        // without telling us why, so try the link ourselves and move on if it's bad.
+        Api.Stream s = null;
+        String why = null;
+        int tries = 0;
+        do {
+            s = api.stream(v, settings.quality, skip);
+            lastNext = s.next;
+            Log.add("stream " + s.url);
+            if (!s.probe) break;
+            waitText.setText("Testing " + s.server.substring(s.server.indexOf("://") + 3) + "...");
+            why = Net.probe(s.url);
+            if (why == null) break;
+            skip = s.next;
+            tries++;
+        } while (tries < api.streamServers() && g == gen);
+        if (why != null) throw new Exception("No server could deliver this video (" + why + ")");
         if (g != gen) return;
         waitText.setText("Opening player...");
         if (m == Settings.MODE_INAPP) {

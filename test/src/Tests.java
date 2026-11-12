@@ -121,6 +121,26 @@ public class Tests {
         Api.Stream d1 = inv.stream(iv, Api.Q_H264, 1);
         eq(d1.url, iv.stream, "invidious direct stream as last resort");
 
+        // --- server test: sweep, status, pre-play probe ---
+        Api sw = new Api(); sw.legacy = new Vector(); sw.legacy.addElement(GONE); sw.legacy.addElement(L);
+        sw.yt2009.addElement(Y); sw.invidious.addElement(INV);
+        eq(Integer.valueOf(sw.sweep()), Integer.valueOf(3), "sweep counts live servers");
+        eq(sw.status(GONE), "down", "status down");
+        ok(!sw.ping(DEAD), "a server answering 500 counts as down");
+        ok(sw.status(L).startsWith("ok ") && sw.status(L).endsWith(" ms"), "status ok with time: " + sw.status(L));
+        eq(new Api().status(L), "not tested", "status untested");
+        eq(Integer.valueOf(sw.servers().size()), Integer.valueOf(4), "server list");
+        Api.Stream ps = sw.stream(wv, Api.Q_MP4V, 0);
+        ok(!ps.server.equals(GONE), "swept-dead server not first");
+        eq(Net.probe(Y + "/http_mpeg4?v=abcDEF_-001"), null, "probe accepts a served file");
+        ok(Net.probe(YBAD + "/assets/x.mp4") != null, "probe rejects a 404");
+        ok(Net.probe(L + "/get_top_videos.php").indexOf("instead of video") > 0, "probe rejects json");
+        byte[] fast = { 0,0,0,16, 'f','t','y','p', 'i','s','o','m', 0,0,0,0, 0,0,1,0, 'm','o','o','v' };
+        eq(Net.mp4Layout(fast, fast.length), "boxes=ftyp,moov", "mp4 layout faststart");
+        fast[20] = 'm'; fast[21] = 'd'; fast[22] = 'a'; fast[23] = 't';
+        eq(Net.mp4Layout(fast, fast.length), "boxes=ftyp,mdat", "mp4 layout index at end");
+        eq(Net.mp4Layout(fast, 4), "boxes=?", "mp4 layout short");
+
         // --- files: folder pick, .ram, download to file ---
         new java.io.File("/tmp/tubefs/E:").mkdirs();
         String dir = Files.pickDir("");

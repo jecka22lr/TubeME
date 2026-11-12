@@ -18,7 +18,9 @@ Quality: H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p (default tier is MPEG-4), H.26
 
 ## Servers
 
-Menu > Update servers reloads the list (also done automatically every 3 days). The list URL and a
+Every start the app checks which servers this phone can reach (Menu > Servers shows the result and can
+test again or reload the list, which also happens automatically every 3 days). Before a link goes to a
+player the app opens it itself and reads the first bytes, moving to the next server if that fails. The list URL and a
 personal YtAPILegacy server are in Settings, or in the JAD as `TubeME-List-URL` / `TubeME-Server`.
 
 ## Build and test

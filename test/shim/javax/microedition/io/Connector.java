@@ -17,6 +17,7 @@ public class Connector {
         case "getResponseCode": return h.getResponseCode();
         case "getHeaderField": return a[0] instanceof String ? h.getHeaderField((String) a[0]) : h.getHeaderField((Integer) a[0]);
         case "getLength": return h.getContentLengthLong();
+        case "getType": return h.getContentType();
         case "getURL": return u;
         case "openInputStream": return h.getInputStream();
         case "close": h.disconnect(); return null;

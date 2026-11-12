@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.2";
+    static final String VERSION = "0.1.3";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -72,6 +72,58 @@ final class Api {
         return good.containsKey(base);
     }
 
+    /** Reply time of the last check per server, in ms. */
+    private final Hashtable ms = new Hashtable();
+
+    /** Every known server as { kind, base }. */
+    Vector servers() {
+        Vector v = new Vector();
+        add(v, "YtAPILegacy", Util.cleanBase(custom));
+        for (int i = 0; i < legacy.size(); i++) add(v, "YtAPILegacy", (String) legacy.elementAt(i));
+        for (int i = 0; i < yt2009.size(); i++) add(v, "yt2009", (String) yt2009.elementAt(i));
+        for (int i = 0; i < invidious.size(); i++) add(v, "Invidious", (String) invidious.elementAt(i));
+        return v;
+    }
+
+    /** Checks one server from this phone, on this connection. Any HTTP answer counts as up. */
+    boolean ping(String base) {
+        long t = System.currentTimeMillis();
+        try {
+            int code = Net.code(base + "/health");
+            // 404 is fine (older servers have no /health); 5xx means it's up but broken
+            if (code >= 500) throw new Exception("HTTP " + code);
+            long took = System.currentTimeMillis() - t;
+            ms.put(base, String.valueOf(took));
+            markGood(base);
+            Log.add("ping ok " + took + "ms http=" + code + " " + base);
+            return true;
+        } catch (Throwable e) {
+            ms.remove(base);
+            markDead(base);
+            Log.err("ping " + base, e);
+            return false;
+        }
+    }
+
+    /** Checks every known server. Returns how many answered. */
+    int sweep() {
+        Vector v = servers();
+        int up = 0;
+        for (int i = 0; i < v.size(); i++) {
+            if (ping(((String[]) v.elementAt(i))[1])) up++;
+        }
+        Log.add("sweep " + up + "/" + v.size() + " up");
+        return up;
+    }
+
+    /** "ok 320 ms", "down" or "not tested". */
+    String status(String base) {
+        if (dead.containsKey(base)) return "down";
+        if (!good.containsKey(base)) return "not tested";
+        Object t = ms.get(base);
+        return t == null ? "ok" : "ok " + t + " ms";
+    }
+
     /** Moves servers that already failed this session to the back. */
     private Vector deadLast(Vector in) {
         Vector out = new Vector();
@@ -94,6 +146,8 @@ final class Api {
         String ext;
         String mime;
         String server;
+        /** True when the link is a ready file that is cheap to peek at before playing. */
+        boolean probe;
         /** Pass as skip to get the next server. */
         int next;
     }
@@ -324,6 +378,7 @@ final class Api {
                 if (e[1].startsWith("https") == (pass == 1)) add(out, e[0], e[1]);
             }
         }
+        out = deadLast(out);
         if (quality == Q_H264 && v.stream != null && v.stream.length() > 0) {
             out.addElement(new String[] { "D", v.stream });
         }
@@ -357,6 +412,7 @@ final class Api {
                 boolean threeGp = quality == Q_H263;
                 s.ext = threeGp ? "3gp" : "mp4";
                 s.mime = threeGp ? "video/3gpp" : "video/mp4";
+                s.probe = !e[0].equals("L");
                 if (e[0].equals("D")) {
                     s.url = e[1];
                 } else if (e[0].equals("L")) {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- Server test on every start: each known server is checked from the phone, unreachable ones go to the
+  back of the queue. Menu > Servers shows each one as ok (with reply time), down or not tested, and
+  can test again or update the list
+- Before a streaming link goes to a player the app opens it itself and reads the first bytes; a bad
+  link is skipped for the next server. The log records the content type, size, range support and
+  whether the file can be played while it downloads (boxes=ftyp,moov) or only once complete (ftyp,mdat)
+
 ## 0.1.2
 
 - The wait screen is one plain text form reused for every task (no animated gauges). The app being
