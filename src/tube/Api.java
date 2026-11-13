@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.2.1";
+    static final String VERSION = "0.2.2";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -603,6 +603,50 @@ final class Api {
         }
         throw new Exception(last == null ? "No servers configured" : msg(last));
     }
+
+    /**
+     * The top comments of a video as { author, text, extra } rows, from the
+     * first server that has them. extra is "12 likes, 2 days ago" style or "".
+     */
+    Vector comments(String id) throws Exception {
+        Vector order = metaOrder();
+        Exception last = null;
+        for (int k = 0; k < order.size(); k++) {
+            String[] e = (String[]) order.elementAt(k);
+            boolean leg = e[0].equals("L"), mine = e[0].equals("T");
+            try {
+                String path = leg ? "/get-ytvideo-info.php?video_id=" + id
+                        : mine ? "/comments?id=" + id
+                        : "/api/v1/comments/" + id + "?fields=comments";
+                Object o = Json.parse(Net.getText(e[1] + path));
+                Vector in = o instanceof Vector ? (Vector) o : Json.arr(o, "comments");
+                if (!(o instanceof Vector) && !(o instanceof Hashtable)) throw new Exception("Bad answer");
+                if (o instanceof Hashtable && Json.str(o, "error").length() > 0 && in.size() == 0) throw new Exception(Json.str(o, "error"));
+                Vector out = new Vector();
+                for (int i = 0; i < in.size() && out.size() < MAX_COMMENTS; i++) {
+                    Object c = in.elementAt(i);
+                    String text = Json.str(c, mine || leg ? "text" : "content");
+                    if (text.length() == 0) continue;
+                    if (text.length() > 500) text = text.substring(0, 500) + "...";
+                    String likes = Json.str(c, mine ? "likes" : "likeCount");
+                    String when = Json.str(c, mine ? "when" : leg ? "published_at" : "publishedText");
+                    String extra = (likes.length() > 0 && !likes.equals("0")) ? likes + (likes.equals("1") ? " like" : " likes") : "";
+                    if (when.length() > 0) extra = extra.length() > 0 ? extra + ", " + when : when;
+                    out.addElement(new String[] { Json.str(c, "author"), text, extra });
+                }
+                markGood(e[1]);
+                return out;
+            } catch (Exception ex) {
+                Log.err("comments " + e[1], ex);
+                // a server without comments is not a broken server: don't demote it for search
+                if (ex instanceof java.io.IOException) failed(e[1], ex);
+                last = ex;
+            }
+        }
+        throw new Exception("No server had the comments" + (last == null ? "" : ": " + msg(last)));
+    }
+
+    static final int MAX_COMMENTS = 30;
 
     private static Video fromOwn(Object o, String base) {
         if (!(o instanceof Hashtable)) return null;

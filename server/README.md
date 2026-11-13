@@ -2,7 +2,7 @@
 
 A small server you run on your own computer (Windows, macOS or Linux). It fetches a YouTube video,
 converts it to something an old phone can play, and hands it to TubeME. It also answers search,
-video details and thumbnails, so TubeME works with it alone.
+video details thumbnails and comments, so TubeME works with it alone.
 
 What it adds over the public servers:
 

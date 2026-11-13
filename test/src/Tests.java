@@ -338,6 +338,25 @@ public class Tests {
         ok(gone2.stream(oi2, Api.Q_MP4V, 0).server.equals(L), "own server switched off: the others still serve");
         Api.POLL_EVERY = 1500;
 
+        // --- comments from each kind of server ---
+        Api cOwn = new Api(); cOwn.legacy = new Vector(); cOwn.legacy.addElement(L); cOwn.own = OWN;
+        Vector cm = cOwn.comments("abcDEF_-001");
+        eq(Integer.valueOf(cm.size()), Integer.valueOf(2), "own comments, empty ones dropped");
+        String[] c0 = (String[]) cm.elementAt(0);
+        eq(c0[0], "Zed", "comment author"); eq(Integer.valueOf(c0[1].length()), Integer.valueOf(503), "long comment trimmed");
+        eq(c0[2], "12 likes, 2 days ago", "likes and age"); eq(((String[]) cm.elementAt(1))[2], "1 like", "single like, no age");
+        Api cLeg = new Api(); cLeg.legacy = new Vector(); cLeg.legacy.addElement(L);
+        Vector cl = cLeg.comments("abcDEF_-001");
+        eq(Integer.valueOf(cl.size()), Integer.valueOf(1), "YtAPILegacy comments");
+        eq(((String[]) cl.elementAt(0))[1], "Leg\u00e1l!", "legacy comment text"); eq(((String[]) cl.elementAt(0))[2], "3 days ago", "legacy age");
+        Api cInv = new Api(); cInv.legacy = new Vector(); cInv.legacy.addElement(GONE); cInv.invidious.addElement(INV);
+        Vector ci = cInv.comments("abcDEF_-001");
+        eq(((String[]) ci.elementAt(0))[0], "Inv person", "Invidious comments after an unreachable server");
+        eq(((String[]) ci.elementAt(0))[2], "5 hours ago", "zero likes not shown");
+        Api cNone = new Api(); cNone.legacy = new Vector(); cNone.legacy.addElement(GONE);
+        threw = false; try { cNone.comments("abcDEF_-001"); } catch (Exception e) { threw = e.getMessage().startsWith("No server had the comments"); }
+        ok(threw, "no comments anywhere is reported");
+
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
         rk.yt2009.addElement(Y); rk.yt2009.addElement(YBAD); rk.invidious.addElement(INV);

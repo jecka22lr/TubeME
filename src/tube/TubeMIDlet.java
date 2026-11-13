@@ -25,7 +25,7 @@ import javax.microedition.midlet.MIDlet;
 /** UI and flow. All network and file work happens on worker threads. */
 public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress {
     private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
-            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10;
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10, T_COMMENTS = 11;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
 
     private Display display;
@@ -60,6 +60,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     private final Command cDownload = new Command("Save", "Download", Command.SCREEN, 2);
     private final Command cOther = new Command("Server", "Other server", Command.SCREEN, 3);
     private final Command cQuality = new Command("Quality", Command.SCREEN, 4);
+    private final Command cComments = new Command("Comments", Command.SCREEN, 2);
+    private Form commentsForm;
     private final Command cSave = new Command("Save", Command.OK, 1);
     private final Command cPlayFile = new Command("Play", Command.OK, 1);
 
@@ -354,6 +356,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 play();
             } else if (c == cDownload) {
                 run(T_DOWNLOAD, Boolean.FALSE, "Preparing download...");
+            } else if (c == cComments) {
+                run(T_COMMENTS, cur, "Loading comments...");
             } else if (c == cOther) {
                 skip = lastNext;
                 play();
@@ -370,6 +374,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 settings.save(api);
                 skip = 0;
             }
+            show(home());
+        } else if (d == commentsForm) {
+            commentsForm = null;
             show(home());
         } else if (d == pickList) {
             if (c == cBack) {
@@ -565,6 +572,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (d.length() > 0) f.append(new StringItem(null, "\n" + d));
         f.addCommand(cPlay);
         if (Util.hasFiles()) f.addCommand(cDownload);
+        f.addCommand(cComments);
         f.addCommand(cQuality);
         f.addCommand(cOther);
         f.addCommand(cBack);
@@ -667,6 +675,26 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                     case T_THUMB:
                         doThumb((Video) arg);
                         break;
+                    case T_COMMENTS: {
+                        Video v = (Video) arg;
+                        Vector cs = api.comments(v.id);
+                        if (g != gen) return;
+                        if (cs.size() == 0) {
+                            info("Comments", "No comments on this video.", home());
+                            break;
+                        }
+                        Form f = new Form("Comments (" + cs.size() + ")");
+                        for (int i = 0; i < cs.size(); i++) {
+                            String[] c = (String[]) cs.elementAt(i);
+                            // author as the label; likes and age on a line of their own under the text
+                            f.append(new StringItem(c[0].length() > 0 ? c[0] : "?", c[1] + (c[2].length() > 0 ? "\n(" + c[2] + ")" : "") + "\n"));
+                        }
+                        f.addCommand(cBack);
+                        f.setCommandListener(TubeMIDlet.this);
+                        commentsForm = f;
+                        show(f);
+                        break;
+                    }
                     case T_LOGFILE: {
                         String path = dir() + "tubeme-log.txt";
                         OutputStream o = Files.openOut(path);

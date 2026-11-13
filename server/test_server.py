@@ -51,6 +51,10 @@ if url.startswith("ytsearch15:"):
     assert "--flat-playlist" in a and "-J" in a
     print(json.dumps({"entries": [{"id": "realvideo%02d" % i, "title": "Result %d" % i, "channel": "Chan", "duration": 61.0, "view_count": 5}
                                    for i in range(2)] + [{"id": "short", "title": "not a video id"}, None]})); sys.exit(0)
+if "--write-comments" in a:
+    assert "max_comments=30" in a[a.index("--extractor-args") + 1]
+    print(json.dumps({"id": vid, "comments": [{"author": "@someone", "text": "x" * 900, "like_count": 4, "_time_text": "2 days ago"},
+                                              {"author": "@other", "text": "second", "like_count": None}, {"author": "@empty", "text": ""}, None]})); sys.exit(0)
 if "-J" in a:
     if vid == "onlyimages1" and "--ignore-no-formats-error" not in a:
         sys.stderr.write("ERROR: [youtube] onlyimages1: Requested format is not available\\n"); sys.exit(1)
@@ -90,6 +94,9 @@ def stub_phase():
         ok(code == 200 and d["title"] == "Real title" and d["author"] == "Up" and d["published"] == "2026-01-02" and len(d["description"]) == 1500,
            "info through yt-dlp")
         ok(js("/info?id=onlyimages1")[0] == 200, "details still load when YouTube offers no formats")
+        code, cm = js("/comments?id=realvideo00")
+        ok(code == 200 and len(cm) == 2 and cm[0] == {"author": "someone", "text": "x" * 600, "likes": 4, "when": "2 days ago"}
+           and cm[1]["likes"] == 0 and cm[1]["when"] == "", "comments through yt-dlp, trimmed and cleaned")
         def wait(vid, key):
             t0 = time.time()
             while time.time() - t0 < 60:
@@ -175,6 +182,9 @@ def main():
         code, d = js("/info?id=" + vid)
         ok(code == 200 and d["title"] == "Demo clip 1" and d["seconds"] == 12 and "description" in d, "info")
         ok(js("/info?id=../../etc")[0] == 400, "bad id refused")
+        code, cm = js("/comments?id=" + vid)
+        ok(code == 200 and len(cm) == 3 and cm[0]["author"] == "Viewer 1" and "likes" in cm[0], "comments")
+        ok(js("/comments?id=nope")[0] == 400, "comments need a video id")
 
         for w, want in ((320, 320), (120, 120), (9999, 320)):
             code, h, body = get("/thumb?id=%s&w=%d" % (vid, w))

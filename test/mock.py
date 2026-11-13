@@ -62,7 +62,9 @@ class H(BaseHTTPRequestHandler):
                 self.hit("legacy-info")
                 return self.send(200, {"title": "Info title", "author": "Info author", "description": "line1\nline2 \u00e9",
                     "views": "4242", "likes": "7", "duration": "PT16M21S", "published_at": "Jan 2, 2026",
-                    "thumbnail": "/thumbnail/" + i, "channel_thumbnail": "", "subscriberCount": "5", "comments": [], "n": 1.5, "x": None, "t": True})
+                    "thumbnail": "/thumbnail/" + i, "channel_thumbnail": "", "subscriberCount": "5",
+                    "comments": [{"author": "Ana", "text": "Leg\u00e1l!", "published_at": "3 days ago", "author_thumbnail": ""},
+                                 {"author": "Rui", "text": "", "published_at": "1 day ago"}], "n": 1.5, "x": None, "t": True})
             if p == "/direct_url":
                 kind = q.get("codec", ["h264-" + q.get("quality", ["?"])[0]])[0]
                 self.hit("legacy-video:" + kind)
@@ -107,6 +109,10 @@ class H(BaseHTTPRequestHandler):
                 self.hit("own-info")
                 return self.send(200, {"id": q["id"][0], "title": "Own title", "author": "Mine", "seconds": 125, "views": 7,
                     "published": "2026-01-02", "description": "own description"})
+            if p == "/comments":
+                self.hit("own-comments")
+                return self.send(200, [{"author": "Zed", "text": "first " + "y" * 600, "likes": 12, "when": "2 days ago"},
+                                       {"author": "", "text": "anon", "likes": 1, "when": ""}, {"author": "Nope", "text": ""}])
             if p == "/thumb":
                 self.hit("own-thumb:" + q.get("w", ["-"])[0]); return self.send(200, THUMB, "image/png")
             if p == "/prepare":
@@ -132,6 +138,10 @@ class H(BaseHTTPRequestHandler):
                 self.hit("inv-search")
                 return self.send(200, [{"type": "video", "videoId": vid(5), "title": "Inv result", "author": "Inv author",
                     "lengthSeconds": 3725, "viewCount": 99}])
+            if p.startswith("/api/v1/comments/"):
+                self.hit("inv-comments")
+                return self.send(200, {"videoId": p.split("/")[-1], "comments": [
+                    {"author": "Inv person", "content": "inv comment", "publishedText": "5 hours ago", "likeCount": 0}]})
             if p.startswith("/api/v1/videos/"):
                 self.hit("inv-info")
                 return self.send(200, {"videoId": p.split("/")[-1], "title": "Inv title", "author": "Inv author", "lengthSeconds": 61,
@@ -146,7 +156,7 @@ def main():
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

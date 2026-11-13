@@ -18,6 +18,7 @@ What the phone app asks for:
     /tubeme                 what this server is and which qualities it makes
     /search?q=...           search results
     /info?id=...            one video's details
+    /comments?id=...        the top comments
     /thumb?id=...&w=320     thumbnail, scaled to the phone's screen
     /prepare?id=...&q=...   start (or check on) a conversion; answers with progress
     /file/<name>            the converted file (supports resuming and seeking)
@@ -38,7 +39,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -269,6 +270,7 @@ class Server:
         self.src_locks = {}
         self.slots = threading.Semaphore(workers)
         self.info_cache = {}
+        self.comment_cache = {}
         encoders = run(["ffmpeg", "-hide_banner", "-encoders"]).stdout.decode("utf-8", "replace")
         self.has_amr = "libopencore_amrnb" in encoders
         self.qualities = []
@@ -316,6 +318,27 @@ class Server:
                      description=(e.get("description") or "")[:1500])
         self.info_cache[vid] = d
         return d
+
+    def comments(self, vid):
+        """The top comments, newest fetch kept for ten minutes."""
+        hit = self.comment_cache.get(vid)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        if self.demo:
+            out = [dict(author="Viewer %d" % i, text="Demo comment number %d.\nSecond line." % i, likes=10 - i, when="%d days ago" % i)
+                   for i in range(1, 4)]
+        else:
+            e = json.loads(self.tools.ytdlp(["-J", "--skip-download", "--ignore-no-formats-error", "--write-comments",
+                                             "--extractor-args", "youtube:max_comments=30,30,0,0;comment_sort=top",
+                                             "https://www.youtube.com/watch?v=" + vid], timeout=120))
+            out = []
+            for c in e.get("comments") or []:
+                if not c or not c.get("text"):
+                    continue
+                out.append(dict(author=(c.get("author") or "").lstrip("@"), text=c["text"][:600],
+                                likes=int(c.get("like_count") or 0), when=c.get("_time_text") or ""))
+        self.comment_cache[vid] = (time.time(), out)
+        return out
 
     def thumb(self, vid, width):
         width = 320 if width >= 320 else 120
@@ -565,16 +588,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/tubeme":
                 return self.send_json({"tubeme": 1, "version": VERSION, "demo": s.demo, "qualities": s.qualities,
+                                       "features": ["comments"],
                                        "sound3gp": "amr" if s.has_amr else "aac"})
             if p == "/search":
                 if not q.get("q", "").strip():
                     return self.fail(400, "q is required")
                 return self.send_json(s.search(q["q"].strip()))
             vid = q.get("id", "")
-            if p in ("/info", "/thumb", "/prepare") and not ID_RE.match(vid):
+            if p in ("/info", "/thumb", "/prepare", "/comments") and not ID_RE.match(vid):
                 return self.fail(400, "id must be an 11 character video id")
             if p == "/info":
                 return self.send_json(s.info(vid))
+            if p == "/comments":
+                return self.send_json(s.comments(vid))
             if p == "/thumb":
                 try:
                     w = int(q.get("w", "320"))

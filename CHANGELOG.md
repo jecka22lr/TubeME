@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 and server 0.4.0
+
+- Comments: a "Comments" entry in the video menu shows up to 30 top comments with author, likes
+  and age. They come from your own server (new `/comments` address), YtAPILegacy or Invidious,
+  whichever answers first
+
 ## 0.2.1
 
 - Settings > "Offer every quality": lists the qualities the app otherwise hides on a phone (H.264
