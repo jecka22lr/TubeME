@@ -9,7 +9,7 @@ mkdir -p $T/api $T/shim $T/cls
 javac -nowarn -cp $T/api -d $T/shim $(find test/shim -name '*.java') 2>/dev/null
 CP=build/classes:$T/shim:$T/api
 javac -nowarn -cp $CP -d $T/cls test/src/*.java 2>/dev/null
-python3 test/mock.py 30 > $T/mock.log 2>&1 &
+python3 test/mock.py 45 > $T/mock.log 2>&1 &
 M=$!
 sleep 1
 timeout 60 java -cp $T/cls:$CP tube.Tests > $T/tests.log 2>&1 || { cat $T/tests.log; tail -5 $T/mock.log; exit 1; }

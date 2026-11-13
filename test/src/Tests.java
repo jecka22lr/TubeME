@@ -237,6 +237,39 @@ public class Tests {
         threw = false; try { old.stream(qv3, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("needs a sign-in") >= 0; }
         ok(threw, "sign-in redirect is not mistaken for a video");
 
+        // --- a stuck server doesn't hold things up: the next is asked too, first answer wins ---
+        String HANG = "http://127.0.0.1:18087";
+        Api hg = new Api(); hg.legacy = new Vector(); hg.yt2009.addElement(HANG); hg.yt2009.addElement(Y);
+        hg.markGood(HANG); hg.ms.put(HANG, "1"); hg.markGood(Y); hg.ms.put(Y, "900");
+        final Vector hsaid = new Vector();
+        hg.progress = new Api.Progress() { public void say(String l) { hsaid.addElement(l); } };
+        Api.HEDGE_AFTER = 700;
+        Video hv = new Video(); hv.id = "abcDEF_-004";
+        long h0 = System.currentTimeMillis();
+        Api.Stream hs = hg.stream(hv, Api.Q_H264_144, 0);
+        long took = System.currentTimeMillis() - h0;
+        eq(hs.server, Y, "second server wins while the first is stuck");
+        ok(took >= 600 && took < 4000, "hedged after the head start, not after the full wait (" + took + " ms)");
+        eq(hsaid.elementAt(0), "Asking 127.0.0.1:18087 to get the video ready", "first ask line");
+        eq(hsaid.elementAt(1), "Also asking 127.0.0.1:18083 to get the video ready", "hedge line");
+        // a ready file answers at once: only one server is asked
+        Api one = new Api(); one.legacy = new Vector(); one.yt2009.addElement(Y); one.yt2009.addElement(HANG);
+        one.markGood(Y); one.ms.put(Y, "1"); one.markGood(HANG); one.ms.put(HANG, "900");
+        final Vector osaid = new Vector();
+        one.progress = new Api.Progress() { public void say(String l) { osaid.addElement(l); } };
+        one.stream(hv, Api.Q_H264_144, 0);
+        eq(Integer.valueOf(osaid.size()), Integer.valueOf(1), "quick answer means one server asked");
+        // everything stuck: gives up at the limit, says so, and asks that server last next time
+        Api.PREPARE_TIMEOUT = 1500;
+        Api stuck = new Api(); stuck.legacy = new Vector(); stuck.yt2009.addElement(HANG);
+        threw = false; try { stuck.stream(hv, Api.Q_H264_144, 0); } catch (Api.NoQuality e) { threw = false; } catch (Exception e) { threw = e.getMessage().indexOf("no answer in 1 s") >= 0; }
+        ok(threw, "all stuck: reported as no answer, not as a quality question");
+        stuck.yt2009.addElement(Y); stuck.markGood(HANG); stuck.ms.put(HANG, "1"); stuck.markGood(Y); stuck.ms.put(Y, "900");
+        Video hv2 = new Video(); hv2.id = "abcDEF_-005";
+        Api.HEDGE_AFTER = 60000;
+        eq(stuck.stream(hv2, Api.Q_H264_144, 0).server, Y, "a server that timed out is asked last for that quality");
+        Api.PREPARE_TIMEOUT = 90000; Api.HEDGE_AFTER = 15000;
+
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
         rk.yt2009.addElement(Y); rk.yt2009.addElement(YBAD); rk.invidious.addElement(INV);

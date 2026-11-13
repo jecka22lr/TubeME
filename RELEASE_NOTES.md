@@ -1,5 +1,5 @@
-Confirmed on a Nokia C6-00: downloading and RealPlayer mode work.
+Confirmed on a Nokia C6-00: downloading, RealPlayer mode and the quality picker work.
 
-- Symbian playback list: Auto, "RealPlayer, stream", "RealPlayer, download first", In-app player, Phone's player/browser
-- Other phones don't list the RealPlayer streaming mode
-- When nothing can be saved (no card, or file access refused), Play hands the link to the phone instead of failing
+- If a server hasn't answered after 15 s, the next one is asked too and the first answer wins
+- Running "Still waiting" counter on the wait screen
+- Servers that timed out on a quality are asked last for it

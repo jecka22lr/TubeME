@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs
 
 HITS = set()
 VIDEO = bytes(range(256)) * 300  # 76800 bytes of "video"
-LEG, DEAD, Y09, Y09BAD, INV, Y09OLD = 18081, 18082, 18083, 18084, 18085, 18086
+LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG = 18081, 18082, 18083, 18084, 18085, 18086, 18087
 
 def png(w, h):
     import zlib, struct
@@ -93,6 +93,9 @@ class H(BaseHTTPRequestHandler):
             if p == "/mp4_144":
                 return self.send(302, b"", headers={"Location": "/auth.html?redir=rtsp"})
             return self.send(404, b"Cannot GET", "text/html")
+        if port == Y09HANG:  # a server whose conversion is stuck: answers far too late
+            if p == "/health": return self.send(404, b"", "text/html")
+            time.sleep(8); return self.send(302, b"", headers={"Location": "/assets/late.mp4"})
         if port == INV:
             if p == "/api/v1/search":
                 self.hit("inv-search")
@@ -107,7 +110,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     secs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD):
+    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG):
         s = HTTPServer(("127.0.0.1", port), H)
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)

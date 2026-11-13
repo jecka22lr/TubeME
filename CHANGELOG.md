@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.12
+
+- A yt2009 server that sits on a request no longer holds everything up: if the first server hasn't
+  answered after 15 s the next one is asked as well, and whichever answers first is used
+- The wait screen shows a running "Still waiting... 20 s" line during long waits
+- A server that used up the whole 90 s for a quality is asked last for that quality for the rest of
+  the session
+
 ## 0.1.11
 
 - "Phone's player/browser" is back in the Symbian playback list (0.1.10 had removed it)

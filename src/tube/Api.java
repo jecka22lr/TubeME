@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.11";
+    static final String VERSION = "0.1.12";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -538,6 +538,14 @@ final class Api {
             }
         }
         out = ranked(out, pinned);
+        // servers that sat on this quality until the time limit are asked after the rest
+        Vector front = new Vector(), back = new Vector();
+        for (int k = 0; k < out.size(); k++) {
+            String[] e = (String[]) out.elementAt(k);
+            (slow.containsKey(e[1] + "#" + quality) ? back : front).addElement(e);
+        }
+        for (int k = 0; k < back.size(); k++) front.addElement(back.elementAt(k));
+        out = front;
         if (quality == Q_H264 && v.stream != null && v.stream.length() > 0) {
             out.addElement(new String[] { "D", v.stream });
         }
@@ -560,29 +568,40 @@ final class Api {
         }
         int n = order.size();
         if (n == 0) throw new Exception("No video servers configured");
-        Exception last = null;
         // a quality question only if some server said "I don't have that" and
         // no server that is up failed for another reason
-        boolean anyMissing = false, otherFailure = false;
+        anyMissing = false;
+        otherFailure = false;
+        lastError = null;
+        boolean raced = false;
         for (int t = 0; t < n; t++) {
             int idx = (skip + t) % n;
             String[] e = (String[]) order.elementAt(idx);
             if (!e[0].equals("D") && !offers(e[0], e[1], quality)) {
-                last = new Exception(host(e[1]) + " doesn't offer this quality");
+                lastError = new Exception(host(e[1]) + " doesn't offer this quality");
                 anyMissing = true;
                 continue;
             }
+            if (e[0].equals("Y")) {
+                if (raced) continue;
+                // every remaining yt2009 server goes into one hedged round
+                raced = true;
+                Vector idxs = new Vector();
+                for (int u = t; u < n; u++) {
+                    int j = (skip + u) % n;
+                    String[] f = (String[]) order.elementAt(j);
+                    if (f[0].equals("Y") && offers("Y", f[1], quality)) idxs.addElement(new Integer(j));
+                }
+                Stream s = askAround(idxs, v, quality);
+                if (s != null) return s;
+                continue;
+            }
             try {
-                Stream s = new Stream();
-                s.server = Util.baseOf(e[1]);
-                s.next = idx + 1;
-                boolean threeGp = quality == Q_H263 || quality == Q_H263_144;
-                s.ext = threeGp ? "3gp" : "mp4";
-                s.mime = threeGp ? "video/3gpp" : "video/mp4";
-                s.probe = !e[0].equals("L");
+                Stream s = newStream(e[1], idx, quality);
                 if (e[0].equals("D")) {
                     s.url = e[1];
-                } else if (e[0].equals("L")) {
+                } else {
+                    s.probe = false;
                     if (!alive(e[1])) throw new Exception("server unreachable");
                     String u = e[1] + "/direct_url?video_id=" + v.id;
                     if (quality == Q_H263) u += "&codec=h263";
@@ -590,42 +609,161 @@ final class Api {
                     else u += "&codec=mpeg4";
                     // ignored by the server; helps players that sniff the extension
                     s.url = u + "&ext=." + s.ext;
-                } else {
-                    String[] paths = yt2009Paths(quality);
-                    say("Asking " + host(e[1]) + " to get the video ready (up to " + (PREPARE_TIMEOUT / 1000) + " s)");
-                    for (int pi = 0; pi < paths.length; pi++) {
-                        Log.add("ask " + e[1] + paths[pi] + v.id);
-                        try {
-                            s.url = Net.redirect(e[1] + paths[pi] + v.id, PREPARE_TIMEOUT);
-                            break;
-                        } catch (java.io.IOException io) {
-                            String m = io.getMessage();
-                            boolean missing = m != null && m.startsWith("HTTP 404");
-                            if (missing && pi + 1 < paths.length) continue;
-                            if (missing) {
-                                this.missing.put(e[1] + "#" + quality, "");
-                                throw new Exception("doesn't offer this quality");
-                            }
-                            // the server keeps converting after we stop waiting, so a later try is quick
-                            if (m != null && m.startsWith("no answer")) throw new Exception("still preparing the video; try again in a minute");
-                            throw io;
-                        }
-                    }
-                    if (s.url.indexOf("/auth") >= 0 && s.url.indexOf(".html") >= 0) throw new Exception("needs a sign-in");
                 }
                 return s;
             } catch (Exception ex) {
-                Log.err("stream " + e[1], ex);
-                say(host(e[1]) + ": " + msg(ex));
-                last = ex;
-                String m = ex.getMessage();
-                boolean notOffered = m != null && m.indexOf("doesn't offer this quality") >= 0;
-                if (notOffered) anyMissing = true;
-                else if (!dead.containsKey(e[1])) otherFailure = true;
+                failedStream(e[1], ex);
             }
         }
         if (anyMissing && !otherFailure) throw new NoQuality(Q_NAMES[quality] + " isn't available from any server that is up");
-        throw new Exception("No server could provide the video: " + msg(last));
+        throw new Exception("No server could provide the video: " + msg(lastError));
+    }
+
+    private boolean anyMissing, otherFailure;
+    private Exception lastError;
+
+    private static Stream newStream(String base, int idx, int quality) {
+        Stream s = new Stream();
+        s.server = Util.baseOf(base);
+        s.next = idx + 1;
+        boolean threeGp = quality == Q_H263 || quality == Q_H263_144;
+        s.ext = threeGp ? "3gp" : "mp4";
+        s.mime = threeGp ? "video/3gpp" : "video/mp4";
+        s.probe = true;
+        return s;
+    }
+
+    private void failedStream(String base, Exception ex) {
+        Log.err("stream " + base, ex);
+        say(host(base) + ": " + msg(ex));
+        lastError = ex;
+        String m = ex.getMessage();
+        if (m != null && m.indexOf("doesn't offer this quality") >= 0) anyMissing = true;
+        else if (!dead.containsKey(base)) otherFailure = true;
+    }
+
+    /** Asks one yt2009 server for the address of a ready (or freshly converted) file. */
+    private String askYt2009(String base, int quality, String id) throws Exception {
+        String[] paths = yt2009Paths(quality);
+        String url = null;
+        for (int pi = 0; pi < paths.length; pi++) {
+            Log.add("ask " + base + paths[pi] + id);
+            try {
+                url = Net.redirect(base + paths[pi] + id, PREPARE_TIMEOUT);
+                break;
+            } catch (java.io.IOException io) {
+                String m = io.getMessage();
+                boolean gone = m != null && m.startsWith("HTTP 404");
+                if (gone && pi + 1 < paths.length) continue;
+                if (gone) {
+                    missing.put(base + "#" + quality, "");
+                    throw new Exception("doesn't offer this quality");
+                }
+                if (m != null && m.startsWith("no answer")) {
+                    // it may be converting still, or its conversion may have failed (then it never answers)
+                    slow.put(base + "#" + quality, "");
+                    throw new Exception("no answer in " + (PREPARE_TIMEOUT / 1000) + " s; it may still be converting, or can't make this quality");
+                }
+                throw io;
+            }
+        }
+        if (url.indexOf("/auth") >= 0 && url.indexOf(".html") >= 0) throw new Exception("needs a sign-in");
+        return url;
+    }
+
+    /** How long one server gets before the next is asked as well. */
+    static long HEDGE_AFTER = 15000;
+    /** "server#quality" pairs that sat on a request until the time limit, this session: asked last. */
+    private final Hashtable slow = new Hashtable();
+
+    private final class Ask implements Runnable {
+        final String base;
+        final int idx, quality;
+        final String id;
+        final Object lock;
+        String url;
+        Exception error;
+        boolean done, reported;
+
+        Ask(String base, int idx, int quality, String id, Object lock) {
+            this.base = base;
+            this.idx = idx;
+            this.quality = quality;
+            this.id = id;
+            this.lock = lock;
+        }
+
+        public void run() {
+            try {
+                url = askYt2009(base, quality, id);
+            } catch (Exception ex) {
+                error = ex;
+            } catch (Throwable t) {
+                error = new Exception(t.toString());
+            }
+            synchronized (lock) {
+                done = true;
+                lock.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * Asks yt2009 servers for the video, hedged: the first gets a head
+     * start, and if it hasn't answered after HEDGE_AFTER the next is asked
+     * too (at most two waiting at once). Whoever answers first wins. A ready
+     * file answers in a second or two, so usually only one server is asked;
+     * a server stuck on a conversion no longer holds everything up.
+     */
+    private Stream askAround(Vector idxs, Video v, int quality) {
+        int m = idxs.size();
+        if (m == 0) return null;
+        Object lock = new Object();
+        Ask[] asks = new Ask[m];
+        int launched = 0;
+        long start = System.currentTimeMillis(), lastLaunch = 0, nextTick = 10000;
+        Ask winner = null;
+        synchronized (lock) {
+            while (true) {
+                int pending = 0;
+                for (int i = 0; i < launched; i++) {
+                    Ask a = asks[i];
+                    if (!a.done) pending++;
+                    else if (a.url != null) {
+                        if (winner == null) winner = a;
+                    } else if (!a.reported) {
+                        a.reported = true;
+                        failedStream(a.base, a.error);
+                    }
+                }
+                if (winner != null) break;
+                long now = System.currentTimeMillis();
+                boolean hedge = pending < 2 && now - lastLaunch >= HEDGE_AFTER;
+                if (launched < m && (pending == 0 || hedge)) {
+                    int idx = ((Integer) idxs.elementAt(launched)).intValue();
+                    String base = ((String[]) order.elementAt(idx))[1];
+                    say((pending == 0 ? "Asking " : "Also asking ") + host(base) + " to get the video ready");
+                    Ask a = new Ask(base, idx, quality, v.id, lock);
+                    asks[launched++] = a;
+                    lastLaunch = now;
+                    new Thread(a).start();
+                    continue;
+                }
+                if (pending == 0) break;
+                if (now - start >= nextTick) {
+                    say("Still waiting... " + ((now - start) / 1000) + " s");
+                    nextTick += 10000;
+                }
+                try {
+                    lock.wait(1000);
+                } catch (InterruptedException ie) {
+                }
+            }
+        }
+        if (winner == null) return null;
+        Stream s = newStream(winner.base, winner.idx, quality);
+        s.url = winner.url;
+        return s;
     }
 
     int streamServers() {

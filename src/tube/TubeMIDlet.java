@@ -238,6 +238,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
      */
     public synchronized void say(String line) {
         if (waitText == null) return;
+        // the running "Still waiting... N s" line updates in place instead of filling the screen
+        if (line.startsWith("Still waiting") && waitLines.size() > 0
+                && ((String) waitLines.lastElement()).startsWith("Still waiting")) {
+            waitLines.removeElementAt(waitLines.size() - 1);
+        }
         waitLines.addElement(line);
         while (waitLines.size() > 7) waitLines.removeElementAt(0);
         StringBuffer b = new StringBuffer();
