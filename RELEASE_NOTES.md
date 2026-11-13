@@ -1,5 +1,4 @@
-Quality picker. Confirmed on a Nokia C6-00: downloading and RealPlayer mode work.
+Tidier playback list. Confirmed on a Nokia C6-00: downloading and RealPlayer mode work.
 
-- Symbian playback modes renamed to "RealPlayer, stream" and "RealPlayer, download first"
-- When the chosen quality isn't available from any working server, the app asks which available one to use and carries on
-- Quality lists mark entries no working server offers
+- Symbian offers Auto, "RealPlayer, stream", "RealPlayer, download first" and the in-app player; the browser route is only a fallback when nothing can be saved
+- Other phones no longer list the RealPlayer mode

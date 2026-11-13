@@ -87,6 +87,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         // only offer qualities this phone can show; move a saved one that is no longer offered
         qIds = Api.qualities(System.getProperty("microedition.platform"));
         modeNames = Settings.modeNames(Util.isSymbian());
+        modeIds = Settings.modeIds(Util.isSymbian());
+        if (mIndex(settings.mode) < 0) settings.mode = Settings.MODE_AUTO;
         if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
         Log.add("qualities offered: " + qIds.length);
         api.progress = this;
@@ -124,6 +126,15 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
 
     private int[] qIds;
     private String[] modeNames;
+    private int[] modeIds;
+
+    /** Position of a mode id in the offered list, or -1. */
+    private int mIndex(int id) {
+        for (int i = 0; i < modeIds.length; i++) {
+            if (modeIds[i] == id) return i;
+        }
+        return -1;
+    }
 
     /** Quality names for a list, marking the ones no working server offers right now. */
     private String[] qNames() {
@@ -411,8 +422,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
 
     private void showSettings() {
         settingsForm = new Form("Settings");
-        sMode = new ChoiceGroup("Playback", Choice.POPUP, modeNames, null);
-        sMode.setSelectedIndex(settings.mode, true);
+        String[] mn = new String[modeIds.length];
+        for (int i = 0; i < mn.length; i++) mn[i] = modeNames[modeIds[i]];
+        sMode = new ChoiceGroup("Playback", Choice.POPUP, mn, null);
+        sMode.setSelectedIndex(mIndex(settings.mode), true);
         sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames(), null);
         sQuality.setSelectedIndex(qIndex(settings.quality), true);
         sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
@@ -433,7 +446,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     private void saveSettings() {
-        settings.mode = sMode.getSelectedIndex();
+        settings.mode = modeIds[sMode.getSelectedIndex()];
         settings.quality = qIds[sQuality.getSelectedIndex()];
         settings.thumbs = sOpts.isSelected(0);
         String l = sList.getString().trim();
@@ -597,7 +610,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                         break;
                     }
                     case T_PLAY:
-                        doPlay(g);
+                        doPlay(g, mode());
                         break;
                     case T_DOWNLOAD:
                         doDownload(g, ((Boolean) arg).booleanValue());
@@ -700,10 +713,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         return dirOk;
     }
 
-    private void doPlay(int g) throws Exception {
+    private void doPlay(int g, int m) throws Exception {
         Video v = cur;
         if (v == null) return;
-        int m = mode();
         Log.add("play mode=" + m + " q=" + settings.quality + " skip=" + skip);
         // Test before handing over: a player given a link it can't use fails
         // without telling us why, so try the link ourselves and move on if it's bad.
@@ -773,7 +785,17 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (v == null) return;
         Log.add("download q=" + settings.quality + " skip=" + skip + " thenPlay=" + thenPlay);
         say("Checking the download folder");
-        String folder = dir();
+        String folder;
+        try {
+            folder = dir();
+        } catch (Exception e) {
+            if (!thenPlay) throw e;
+            // nowhere to save (no card, or access refused): let the phone take the link
+            Log.err("no folder", e);
+            say("Can't save here, handing the video to the phone instead");
+            doPlay(g, Settings.MODE_EXTERNAL);
+            return;
+        }
         if (g != gen) return;
         HttpConnection c = null;
         Api.Stream s = null;

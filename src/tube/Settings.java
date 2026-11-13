@@ -20,6 +20,18 @@ final class Settings {
     /** Give the URL to the phone (browser or native player). */
     static final int MODE_EXTERNAL = 4;
 
+    /**
+     * Modes worth offering. On Symbian the app can always download by
+     * itself, so handing the link to the phone's browser (whose own
+     * downloader is the flaky one) is not offered; it stays as the
+     * automatic fallback when nothing can be saved. Elsewhere there is no
+     * RealPlayer to stream to.
+     */
+    static int[] modeIds(boolean symbian) {
+        if (symbian) return new int[] { MODE_AUTO, MODE_REAL, MODE_DOWNLOAD, MODE_INAPP };
+        return new int[] { MODE_AUTO, MODE_DOWNLOAD, MODE_INAPP, MODE_EXTERNAL };
+    }
+
     /** On Symbian both file routes end in RealPlayer, so the names say what differs. */
     static String[] modeNames(boolean symbian) {
         if (symbian) {

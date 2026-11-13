@@ -227,6 +227,10 @@ public class Tests {
         threw = false; try { dn.stream(qv, Api.Q_MP4V, 0); } catch (Api.NoQuality e) { threw = false; } catch (Exception e) { threw = true; }
         ok(threw, "servers being down is an error, not a quality question");
         eq(Settings.modeNames(true)[2], "RealPlayer, download first", "symbian mode name");
+        int[] sm = Settings.modeIds(true), om = Settings.modeIds(false);
+        for (int i = 0; i < sm.length; i++) ok(sm[i] != Settings.MODE_EXTERNAL, "browser route not offered on Symbian");
+        for (int i = 0; i < om.length; i++) ok(om[i] != Settings.MODE_REAL, "RealPlayer not offered off Symbian");
+        ok(sm[0] == Settings.MODE_AUTO && om[0] == Settings.MODE_AUTO, "Auto first on both");
         eq(Settings.modeNames(false)[2], "Download, then play", "other phones keep the plain name");
         Video qv3 = new Video(); qv3.id = "abcDEF_-003";
         threw = false; try { old.stream(qv3, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("needs a sign-in") >= 0; }

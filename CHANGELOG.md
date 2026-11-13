@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10
+
+- "Phone's player/browser" is no longer offered on Symbian, where the app can always download by
+  itself; a saved setting of it becomes Auto. It remains the automatic fallback when nothing can
+  be saved (no card, or file access refused)
+- "RealPlayer" streaming is no longer offered on phones that aren't Symbian
+
 ## 0.1.9
 
 - On Symbian the playback modes are named "RealPlayer, stream" and "RealPlayer, download first"
