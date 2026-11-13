@@ -85,7 +85,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (Util.isSymbian()) settings.quality = Api.Q_MP4V_360;
         settings.load(api);
         // only offer qualities this phone can show; move a saved one that is no longer offered
-        qIds = Api.qualities(System.getProperty("microedition.platform"));
+        loadQualities();
         modeNames = Settings.modeNames(Util.isSymbian());
         modeIds = Settings.modeIds(Util.isSymbian());
         if (mIndex(settings.mode) < 0) settings.mode = Settings.MODE_AUTO;
@@ -127,6 +127,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     private int[] qIds;
+
+    /** The quality list for this phone, or the full one when the user asked for everything. */
+    private void loadQualities() {
+        qIds = Api.qualities(settings.allQualities ? null : System.getProperty("microedition.platform"));
+    }
     private String[] modeNames;
     private int[] modeIds;
 
@@ -438,8 +443,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         sMode.setSelectedIndex(mIndex(settings.mode), true);
         sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames(), null);
         sQuality.setSelectedIndex(qIndex(settings.quality), true);
-        sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
+        sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails", "Offer every quality" }, null);
         sOpts.setSelectedIndex(0, settings.thumbs);
+        sOpts.setSelectedIndex(1, settings.allQualities);
         sOwn = new TextField("My TubeME server (optional)", api.own, 200, TextField.URL);
         sList = new TextField("Server list URL", settings.listUrl, 200, TextField.URL);
         sCustom = new TextField("My YtAPILegacy server (optional)", api.custom, 200, TextField.URL);
@@ -461,6 +467,12 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         settings.mode = modeIds[sMode.getSelectedIndex()];
         settings.quality = qIds[sQuality.getSelectedIndex()];
         settings.thumbs = sOpts.isSelected(0);
+        if (settings.allQualities != sOpts.isSelected(1)) {
+            // the quality list changes shape: rebuild it and keep the choice if it is still offered
+            settings.allQualities = sOpts.isSelected(1);
+            loadQualities();
+            if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
+        }
         String l = sList.getString().trim();
         settings.listUrl = l.length() == 0 ? Api.DEFAULT_LIST_URL : l;
         api.custom = sCustom.getString().trim();
@@ -487,7 +499,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
                 + api.invidious.size() + " Invidious"));
         if (qIds.length < Api.Q_NAMES.length) {
-            f.append(new StringItem("H.264 360p", "not offered: this platform decodes H.264 only up to 320x240"));
+            f.append(new StringItem("H.264 360p", "not offered: this platform is listed as decoding H.264 only up to 320x240. "
+                    + "Settings > Offer every quality brings it back"));
         }
         f.append(new StringItem("Memory", (Runtime.getRuntime().totalMemory() / 1024) + " KB"));
         f.addCommand(cBack);

@@ -40,6 +40,8 @@ final class Settings {
     int mode = MODE_AUTO;
     int quality = Api.Q_MP4V;
     boolean thumbs = true;
+    /** List every quality, including ones this phone is believed not to show. */
+    boolean allQualities;
     String listUrl = Api.DEFAULT_LIST_URL;
     String dir = "";
     long lastUpdate;
@@ -53,7 +55,7 @@ final class Settings {
             if (rs.getNumRecords() < 1) return;
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(rs.getRecord(1)));
             int ver = in.readInt();
-            if (ver < 1 || ver > 3) return;
+            if (ver < 1 || ver > 4) return;
             mode = in.readInt();
             quality = in.readInt();
             thumbs = in.readBoolean();
@@ -70,6 +72,7 @@ final class Settings {
                 for (int k = 0; k < m.size(); k++) api.missing.put(m.elementAt(k), "");
             }
             if (ver >= 3) api.own = in.readUTF();
+            if (ver >= 4) allQualities = in.readBoolean();
         } catch (Throwable t) {
             // first run or damaged record: defaults are fine
         } finally {
@@ -85,7 +88,7 @@ final class Settings {
         try {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             DataOutputStream o = new DataOutputStream(bo);
-            o.writeInt(3);
+            o.writeInt(4);
             o.writeInt(mode);
             o.writeInt(quality);
             o.writeBoolean(thumbs);
@@ -100,6 +103,7 @@ final class Settings {
             for (java.util.Enumeration en = api.missing.keys(); en.hasMoreElements();) m.addElement(en.nextElement());
             writeList(o, m);
             o.writeUTF(api.own);
+            o.writeBoolean(allQualities);
             byte[] d = bo.toByteArray();
             rs = RecordStore.openRecordStore(STORE, true);
             if (rs.getNumRecords() < 1) rs.addRecord(d, 0, d.length);

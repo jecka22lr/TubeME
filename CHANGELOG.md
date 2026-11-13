@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Settings > "Offer every quality": lists the qualities the app otherwise hides on a phone (H.264
+  360p on S60 3rd and 5th Edition), so the phone can be tried instead of trusting a spec sheet
+
 ## Server 0.3.0 (app unchanged)
 
 - Runs on macOS and Linux as well as Windows, and is tested on all three for every change
