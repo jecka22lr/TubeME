@@ -228,7 +228,8 @@ public class Tests {
         ok(threw, "servers being down is an error, not a quality question");
         eq(Settings.modeNames(true)[2], "RealPlayer, download first", "symbian mode name");
         int[] sm = Settings.modeIds(true), om = Settings.modeIds(false);
-        for (int i = 0; i < sm.length; i++) ok(sm[i] != Settings.MODE_EXTERNAL, "browser route not offered on Symbian");
+        eq(Integer.valueOf(sm.length), Integer.valueOf(5), "Symbian lists every mode");
+        ok(sm[4] == Settings.MODE_EXTERNAL, "browser route offered on Symbian");
         for (int i = 0; i < om.length; i++) ok(om[i] != Settings.MODE_REAL, "RealPlayer not offered off Symbian");
         ok(sm[0] == Settings.MODE_AUTO && om[0] == Settings.MODE_AUTO, "Auto first on both");
         eq(Settings.modeNames(false)[2], "Download, then play", "other phones keep the plain name");

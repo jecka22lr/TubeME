@@ -12,7 +12,7 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 | RealPlayer, stream (Symbian) | writes a one-line `.ram` file and opens it, so RealPlayer streams the video | never (manual; hasn't played on a C6-00 yet) |
 | Download, then play ("RealPlayer, download first" on Symbian) | saves to the memory card, then plays the file (with the phone's own player on Symbian) | JSR-75 is there |
 | In-app player | MMAPI (JSR-135) inside the app | no file access, video supported |
-| Phone's player/browser (not listed on Symbian) | `platformRequest` with the stream URL | nothing else works, or nothing can be saved |
+| Phone's player/browser | `platformRequest` with the stream URL | nothing else works, or nothing can be saved |
 
 Quality: H.263 144p 3GP, H.264 144p, H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p. The default is MPEG-4 360p on Symbian and
 MPEG-4 270p elsewhere; H.264 360p is not offered on S60 3rd and 5th Edition (see the table below).

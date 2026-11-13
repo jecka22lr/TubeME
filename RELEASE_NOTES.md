@@ -1,4 +1,5 @@
-Tidier playback list. Confirmed on a Nokia C6-00: downloading and RealPlayer mode work.
+Confirmed on a Nokia C6-00: downloading and RealPlayer mode work.
 
-- Symbian offers Auto, "RealPlayer, stream", "RealPlayer, download first" and the in-app player; the browser route is only a fallback when nothing can be saved
-- Other phones no longer list the RealPlayer mode
+- Symbian playback list: Auto, "RealPlayer, stream", "RealPlayer, download first", In-app player, Phone's player/browser
+- Other phones don't list the RealPlayer streaming mode
+- When nothing can be saved (no card, or file access refused), Play hands the link to the phone instead of failing

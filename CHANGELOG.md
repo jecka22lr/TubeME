@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.11
+
+- "Phone's player/browser" is back in the Symbian playback list (0.1.10 had removed it)
+
 ## 0.1.10
 
 - "Phone's player/browser" is no longer offered on Symbian, where the app can always download by

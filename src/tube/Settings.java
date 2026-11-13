@@ -21,14 +21,11 @@ final class Settings {
     static final int MODE_EXTERNAL = 4;
 
     /**
-     * Modes worth offering. On Symbian the app can always download by
-     * itself, so handing the link to the phone's browser (whose own
-     * downloader is the flaky one) is not offered; it stays as the
-     * automatic fallback when nothing can be saved. Elsewhere there is no
+     * Modes worth offering. Symbian gets all of them; elsewhere there is no
      * RealPlayer to stream to.
      */
     static int[] modeIds(boolean symbian) {
-        if (symbian) return new int[] { MODE_AUTO, MODE_REAL, MODE_DOWNLOAD, MODE_INAPP };
+        if (symbian) return new int[] { MODE_AUTO, MODE_REAL, MODE_DOWNLOAD, MODE_INAPP, MODE_EXTERNAL };
         return new int[] { MODE_AUTO, MODE_DOWNLOAD, MODE_INAPP, MODE_EXTERNAL };
     }
 
