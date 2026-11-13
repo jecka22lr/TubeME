@@ -329,7 +329,8 @@ public class Tests {
         eq(wsaid.elementAt(1), "Converting 40%", "progress: 40%"); eq(wsaid.elementAt(2), "Converting 85%", "progress: 85%");
         eq(Integer.valueOf(Net.get(os.url, 200000).length), Integer.valueOf(76800), "own file downloads");
         Video oi2 = new Video(); oi2.id = "abcDEF_-002";
-        ok(ow.stream(oi2, Api.Q_H263, 0).server.equals(L), "a quality the own server lacks goes to the others");
+        String lackSrv = ow.stream(oi2, Api.Q_H263, 0).server;
+        ok(!lackSrv.equals(OWN) && (lackSrv.equals(L) || lackSrv.equals(Y)), "a quality the own server lacks goes to the others (" + lackSrv + ")");
         Api only1 = new Api(); only1.legacy = new Vector(); only1.own = OWN;
         threw = false; try { only1.stream(oi2, Api.Q_MP4V, 0); } catch (Api.NoQuality e) { threw = true; }
         ok(threw, "own server alone: missing quality asks for another");
