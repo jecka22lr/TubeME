@@ -13,7 +13,7 @@ What it adds over the public servers:
 
 ## Setup
 
-You need **Python 3.9 or newer** and **ffmpeg**. The server installs the rest itself.
+You need **Python 3.10 or newer** and **ffmpeg**. The server installs the rest itself.
 
 **Windows**
 

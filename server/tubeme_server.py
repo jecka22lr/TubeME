@@ -3,7 +3,7 @@
 
 Run it on a PC, then put its address in TubeME (Settings > My TubeME server).
 
-Runs on Windows, macOS and Linux. Needs Python 3.8+ and ffmpeg on the PATH. Everything
+Runs on Windows, macOS and Linux. Needs Python 3.10+ and ffmpeg on the PATH. Everything
 else it looks after itself, inside a "tools" folder next to this script (nothing is
 installed system-wide): at start, and every 12 hours while running, it installs or
 updates yt-dlp, and it fetches Deno (the JavaScript runtime yt-dlp needs for YouTube)
