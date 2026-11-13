@@ -250,8 +250,8 @@ public class Tests {
         long took = System.currentTimeMillis() - h0;
         eq(hs.server, Y, "second server wins while the first is stuck");
         ok(took >= 600 && took < 4000, "hedged after the head start, not after the full wait (" + took + " ms)");
-        eq(hsaid.elementAt(0), "Asking 127.0.0.1:18087 to get the video ready", "first ask line");
-        eq(hsaid.elementAt(1), "Also asking 127.0.0.1:18083 to get the video ready", "hedge line");
+        eq(hsaid.elementAt(0), "Asking 127.0.0.1:18087 to get the video ready (up to 90 s)", "first ask line");
+        eq(hsaid.elementAt(1), "Also asking 127.0.0.1:18083 to get the video ready (up to 90 s)", "hedge line");
         // a ready file answers at once: only one server is asked
         Api one = new Api(); one.legacy = new Vector(); one.yt2009.addElement(Y); one.yt2009.addElement(HANG);
         one.markGood(Y); one.ms.put(Y, "1"); one.markGood(HANG); one.ms.put(HANG, "900");
@@ -269,6 +269,27 @@ public class Tests {
         Api.HEDGE_AFTER = 60000;
         eq(stuck.stream(hv2, Api.Q_H264_144, 0).server, Y, "a server that timed out is asked last for that quality");
         Api.PREPARE_TIMEOUT = 90000; Api.HEDGE_AFTER = 15000;
+
+        // --- waits scale with the video ---
+        eq(Integer.valueOf(Util.seconds("3:21")), Integer.valueOf(201), "m:ss");
+        eq(Integer.valueOf(Util.seconds("1:02:05")), Integer.valueOf(3725), "h:mm:ss");
+        eq(Integer.valueOf(Util.seconds("")), Integer.valueOf(-1), "no duration");
+        eq(Integer.valueOf(Util.seconds("LIVE")), Integer.valueOf(-1), "not a duration");
+        eq(Util.span(90000), "90 s", "span seconds"); eq(Util.span(250000), "4 min", "span minutes");
+        Video tv = new Video();
+        eq(Long.valueOf(Api.prepareTimeout(tv)), Long.valueOf(90000), "unknown length: base wait");
+        tv.duration = "3:00"; eq(Long.valueOf(Api.prepareTimeout(tv)), Long.valueOf(120000), "3 min video: 2 min wait");
+        tv.duration = "30:00"; eq(Long.valueOf(Api.prepareTimeout(tv)), Long.valueOf(390000), "30 min video: 6.5 min wait");
+        tv.duration = "3:00:00"; eq(Long.valueOf(Api.prepareTimeout(tv)), Long.valueOf(900000), "capped at 15 min");
+        tv.duration = "10:00"; eq(Long.valueOf(Api.convertTimeout(tv)), Long.valueOf(500000), "YtAPILegacy conversion wait");
+        Api lg = new Api(); lg.legacy = new Vector(); lg.legacy.addElement(L); lg.yt2009.addElement(Y);
+        lg.markGood(L); lg.ms.put(L, "1"); lg.markGood(Y); lg.ms.put(Y, "900");
+        Video longv = new Video(); longv.id = "abcDEF_-006"; longv.duration = "55:00";
+        eq(lg.stream(longv, Api.Q_MP4V_360, 0).server, Y, "55 min video: YtAPILegacy skipped for conversion");
+        Video longv2 = new Video(); longv2.id = "abcDEF_-007"; longv2.duration = "55:00";
+        ok(lg.stream(longv2, Api.Q_H264, 0).server.equals(L), "but still used for the unconverted file");
+        Video shortv = new Video(); shortv.id = "abcDEF_-008"; shortv.duration = "54:59";
+        ok(lg.stream(shortv, Api.Q_MP4V_360, 0).server.equals(L), "under the limit it converts");
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);

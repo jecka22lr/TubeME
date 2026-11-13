@@ -826,7 +826,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 say("Connecting to " + Api.host(s.server));
                 Log.add("dl open " + s.url);
                 // a ready file answers at once; a YtAPILegacy conversion sends nothing until it is finished
-                c = Net.open(s.url, s.probe ? 60000 : Api.CONVERT_TIMEOUT);
+                long limit = s.probe ? 60000 : Api.convertTimeout(v);
+                if (!s.probe) say("It converts the whole video first (up to " + Util.span(limit) + ")");
+                c = Net.open(s.url, limit);
                 String type = c.getType();
                 if (type != null && (type.startsWith("text/") || type.indexOf("json") >= 0)) {
                     throw new Exception("sent " + type + " instead of video");

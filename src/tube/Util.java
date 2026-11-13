@@ -104,6 +104,34 @@ final class Util {
         return b.toString();
     }
 
+    /** "3:21" or "1:02:05" to seconds; -1 when it isn't a duration. */
+    static int seconds(String d) {
+        if (d == null || d.length() == 0) return -1;
+        int total = 0, cur = 0, parts = 1;
+        boolean digit = false;
+        for (int i = 0; i < d.length(); i++) {
+            char c = d.charAt(i);
+            if (c >= '0' && c <= '9') {
+                cur = cur * 10 + (c - '0');
+                digit = true;
+            } else if (c == ':' && digit && parts < 3) {
+                total = total * 60 + cur;
+                cur = 0;
+                digit = false;
+                parts++;
+            } else {
+                return -1;
+            }
+        }
+        return digit ? total * 60 + cur : -1;
+    }
+
+    /** "90 s" or "4 min", for wait messages. */
+    static String span(long ms) {
+        long s = ms / 1000;
+        return s < 120 ? s + " s" : (s / 60) + " min";
+    }
+
     static int toInt(String s, int def) {
         try {
             int dot = s.indexOf('.');

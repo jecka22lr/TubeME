@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.12";
+    static final String VERSION = "0.1.13";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -97,6 +97,31 @@ final class Api {
     static long PREPARE_TIMEOUT = 90000;
     /** YtAPILegacy converts the whole video before the first byte arrives. */
     static long CONVERT_TIMEOUT = 300000;
+    /** No wait is ever longer than this. */
+    static long MAX_WAIT = 900000;
+    /** YtAPILegacy only converts videos shorter than this (55 min); longer ones come back as plain H.264. */
+    static final int LEGACY_CONVERT_LIMIT = 3300;
+
+    /**
+     * How long a yt2009 server gets for this video. It has to fetch the
+     * video and convert all of it before it answers, so a longer video
+     * gets more: the base wait plus one second per six seconds of video.
+     */
+    static long prepareTimeout(Video v) {
+        int sec = Util.seconds(v.duration);
+        if (sec <= 0) return PREPARE_TIMEOUT;
+        long t = PREPARE_TIMEOUT + sec * 1000L / 6;
+        return t > MAX_WAIT ? MAX_WAIT : t;
+    }
+
+    /** The same for a YtAPILegacy conversion: base wait plus one second per three seconds of video. */
+    static long convertTimeout(Video v) {
+        int sec = Util.seconds(v.duration);
+        if (sec <= 0) return CONVERT_TIMEOUT;
+        long t = CONVERT_TIMEOUT + sec * 1000L / 3;
+        return t > MAX_WAIT ? MAX_WAIT : t;
+    }
+
     /** A server that failed is not asked again for this long. */
     static long RETRY_DEAD_AFTER = 120000;
     static long PING_TIMEOUT = 8000;
@@ -602,6 +627,11 @@ final class Api {
                     s.url = e[1];
                 } else {
                     s.probe = false;
+                    boolean converts = quality == Q_H263 || quality == Q_MP4V || quality == Q_MP4V_360;
+                    if (converts && Util.seconds(v.duration) >= LEGACY_CONVERT_LIMIT) {
+                        // past its limit it would quietly send H.264 instead, which is not what was asked for
+                        throw new Exception("doesn't convert videos over 55 minutes");
+                    }
                     if (!alive(e[1])) throw new Exception("server unreachable");
                     String u = e[1] + "/direct_url?video_id=" + v.id;
                     if (quality == Q_H263) u += "&codec=h263";
@@ -643,13 +673,13 @@ final class Api {
     }
 
     /** Asks one yt2009 server for the address of a ready (or freshly converted) file. */
-    private String askYt2009(String base, int quality, String id) throws Exception {
+    private String askYt2009(String base, int quality, String id, long timeout) throws Exception {
         String[] paths = yt2009Paths(quality);
         String url = null;
         for (int pi = 0; pi < paths.length; pi++) {
             Log.add("ask " + base + paths[pi] + id);
             try {
-                url = Net.redirect(base + paths[pi] + id, PREPARE_TIMEOUT);
+                url = Net.redirect(base + paths[pi] + id, timeout);
                 break;
             } catch (java.io.IOException io) {
                 String m = io.getMessage();
@@ -662,7 +692,7 @@ final class Api {
                 if (m != null && m.startsWith("no answer")) {
                     // it may be converting still, or its conversion may have failed (then it never answers)
                     slow.put(base + "#" + quality, "");
-                    throw new Exception("no answer in " + (PREPARE_TIMEOUT / 1000) + " s; it may still be converting, or can't make this quality");
+                    throw new Exception("no answer in " + Util.span(timeout) + "; it may still be converting, or can't make this quality");
                 }
                 throw io;
             }
@@ -680,12 +710,14 @@ final class Api {
         final String base;
         final int idx, quality;
         final String id;
+        final long timeout;
         final Object lock;
         String url;
         Exception error;
         boolean done, reported;
 
-        Ask(String base, int idx, int quality, String id, Object lock) {
+        Ask(String base, int idx, int quality, String id, long timeout, Object lock) {
+            this.timeout = timeout;
             this.base = base;
             this.idx = idx;
             this.quality = quality;
@@ -695,7 +727,7 @@ final class Api {
 
         public void run() {
             try {
-                url = askYt2009(base, quality, id);
+                url = askYt2009(base, quality, id, timeout);
             } catch (Exception ex) {
                 error = ex;
             } catch (Throwable t) {
@@ -723,6 +755,7 @@ final class Api {
         int launched = 0;
         long start = System.currentTimeMillis(), lastLaunch = 0, nextTick = 10000;
         Ask winner = null;
+        long timeout = prepareTimeout(v);
         synchronized (lock) {
             while (true) {
                 int pending = 0;
@@ -742,8 +775,8 @@ final class Api {
                 if (launched < m && (pending == 0 || hedge)) {
                     int idx = ((Integer) idxs.elementAt(launched)).intValue();
                     String base = ((String[]) order.elementAt(idx))[1];
-                    say((pending == 0 ? "Asking " : "Also asking ") + host(base) + " to get the video ready");
-                    Ask a = new Ask(base, idx, quality, v.id, lock);
+                    say((pending == 0 ? "Asking " : "Also asking ") + host(base) + " to get the video ready (up to " + Util.span(timeout) + ")");
+                    Ask a = new Ask(base, idx, quality, v.id, timeout, lock);
                     asks[launched++] = a;
                     lastLaunch = now;
                     new Thread(a).start();

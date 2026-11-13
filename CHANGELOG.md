@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.13
+
+- Waits scale with the video's length: a yt2009 server gets 90 s plus 1 s per 6 s of video, a
+  YtAPILegacy conversion 5 min plus 1 s per 3 s of video, both capped at 15 minutes. The wait
+  screen says how long it will wait
+- YtAPILegacy is not asked to convert videos of 55 minutes or more (it would send H.264 instead)
+
 ## 0.1.12
 
 - A yt2009 server that sits on a request no longer holds everything up: if the first server hasn't
