@@ -79,7 +79,35 @@ final class Log {
 
     /** Logs where it happened plus the exception class, which phones love to hide. */
     static void err(String where, Throwable t) {
-        add("ERR " + where + ": " + t.getClass().getName() + ": " + t.getMessage());
+        add("ERR " + where + ": " + t.getClass().getName() + ": " + t.getMessage() + symbian(t.getMessage()));
+    }
+
+    /** Symbian reports network failures as bare numbers: say what the common ones mean. */
+    static String symbian(String m) {
+        if (m == null) return "";
+        String code = m.trim();
+        int sp = code.indexOf(' ');
+        if (sp > 0) code = code.substring(0, sp);
+        if (code.length() < 2 || code.charAt(0) != '-') return "";
+        for (int i = 1; i < code.length(); i++) {
+            if (code.charAt(i) < '0' || code.charAt(i) > '9') return "";
+        }
+        String[][] known = {
+            { "-1", "not found: often no free connection left, or no access point" },
+            { "-18", "network not ready" },
+            { "-33", "timed out" },
+            { "-34", "could not connect" },
+            { "-36", "disconnected" },
+            { "-46", "permission denied" },
+            { "-191", "host unreachable" },
+            { "-190", "network unreachable" },
+            { "-5120", "name not found (DNS)" },
+            { "-7370", "connection closed by the server" },
+        };
+        for (int i = 0; i < known.length; i++) {
+            if (known[i][0].equals(code)) return " (" + known[i][1] + ")";
+        }
+        return "";
     }
 
     static String text(boolean previous) {

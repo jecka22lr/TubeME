@@ -62,6 +62,11 @@ public class Tests {
         eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(8), "a server key per quality id");
         eq(Api.Q_KEYS[Api.Q_MP4V_240], "mp4v-240", "240p key"); eq(Api.Q_KEYS[Api.Q_H263_144], "h263-144", "144p key");
 
+        eq(Log.symbian("-191"), " (host unreachable)", "symbian error explained");
+        eq(Log.symbian("-1"), " (not found: often no free connection left, or no access point)", "symbian -1 explained");
+        eq(Log.symbian("HTTP 404"), "", "other messages untouched"); eq(Log.symbian(null), "", "null message");
+        eq(Log.symbian("-99999"), "", "unknown code left alone");
+
         // --- instance list ---
         Api api = new Api();
         eq(Integer.valueOf(api.updateInstances(L + "/notPipe.json")), Integer.valueOf(5), "instance list count");

@@ -9,6 +9,7 @@
   waited for it. Searches now go ahead with the list they have
 - Your own server gets 75 s for search, details and comments (it runs yt-dlp for them)
 - The wait screen says which server is being asked and why one was skipped
+- The Log explains Symbian's numeric network errors (-1, -34, -191, -5120...)
 - Popular works from your own server (new `/popular` address, using YouTube's "hype" charts since
   the Trending page is gone). A server without it is skipped for Popular without being marked down
 
