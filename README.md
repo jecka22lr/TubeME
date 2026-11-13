@@ -14,8 +14,25 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 | In-app player | MMAPI (JSR-135) inside the app | no file access, video supported |
 | Phone's player/browser | `platformRequest` with the stream URL | nothing else works |
 
-Quality: H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p. The default is MPEG-4 360p on Symbian and
+Quality: H.263 144p 3GP, H.264 144p, H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p. The default is MPEG-4 360p on Symbian and
 MPEG-4 270p elsewhere; H.264 360p is not offered on S60 3rd and 5th Edition (see the table below).
+
+## Where each quality comes from
+
+The app never converts anything; it asks a server for an address and the server does the work.
+
+| Quality | yt2009 | YtAPILegacy |
+|---|---|---|
+| H.263 144p (3GP) | `/http_3gp` (176x144, 10 fps, AMR) | no |
+| H.264 144p | `/mp4_144` (256x144, AAC mono) | no (serves 360p for anything smaller) |
+| H.263 288p (3GP) | `/http_3gp_288` (not on every server) | `/direct_url?codec=h263` (352x288, AMR) |
+| MPEG-4 270p | `/http_mpeg4` | `/direct_url?codec=mpeg4` (360p) |
+| MPEG-4 360p | `/http_mpeg4_360`, else `/http_mpeg4` | `/direct_url?codec=mpeg4` |
+| H.264 360p | `/channel_fh264_getvideo` (YouTube's own file, no conversion) | `/direct_url?quality=360` |
+
+yt2009 downloads the video, runs ffmpeg, keeps the result and answers with a redirect to the file, so
+the first request for a video can take a while and later ones are instant. Stock yt2009 does not
+scale `/http_mpeg4`, so "270p" may really be 360p depending on the server.
 
 ## What Symbian phones can decode
 

@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs
 
 HITS = set()
 VIDEO = bytes(range(256)) * 300  # 76800 bytes of "video"
-LEG, DEAD, Y09, Y09BAD, INV = 18081, 18082, 18083, 18084, 18085
+LEG, DEAD, Y09, Y09BAD, INV, Y09OLD = 18081, 18082, 18083, 18084, 18085, 18086
 
 def png(w, h):
     import zlib, struct
@@ -76,7 +76,7 @@ class H(BaseHTTPRequestHandler):
                 self.hit("thumb:" + q.get("quality", ["-"])[0]); return self.send(200, THUMB, "image/png")
         if port == Y09BAD: return self.send(404, b"nope", "text/plain")
         if port == Y09:
-            if p in ("/http_3gp_288", "/http_mpeg4", "/http_mpeg4_360", "/channel_fh264_getvideo"):
+            if p in ("/http_3gp_288", "/http_mpeg4", "/http_mpeg4_360", "/channel_fh264_getvideo", "/mp4_144", "/http_3gp"):
                 self.hit("yt2009" + p)
                 return self.send(302, b"", headers={"Location": "/assets/%s%s.bin" % (q["v"][0], p.replace("/", "-"))})
             if p == "/slow":
@@ -85,6 +85,12 @@ class H(BaseHTTPRequestHandler):
                 self.hit("yt2009-file")
                 if os.environ.get("MOCK_ERRORPAGE"): return self.send(200, b"<html>busy</html>", "text/html")
                 return self.send(200, VIDEO, "video/mp4")
+        if port == Y09OLD:   # stock yt2009: no _360/_288 addresses, and /mp4_144 behind a sign-in
+            if p == "/http_mpeg4":
+                return self.send(302, b"", headers={"Location": "/assets/%s-mpeg4.mp4" % q["v"][0]})
+            if p == "/mp4_144":
+                return self.send(302, b"", headers={"Location": "/auth.html?redir=rtsp"})
+            return self.send(404, b"Cannot GET", "text/html")
         if port == INV:
             if p == "/api/v1/search":
                 self.hit("inv-search")
@@ -99,14 +105,14 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     secs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    for port in (LEG, DEAD, Y09, Y09BAD, INV):
+    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD):
         s = HTTPServer(("127.0.0.1", port), H)
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
     want = ["health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
-            "yt2009/channel_fh264_getvideo", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
+            "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]
     print("MOCK", "OK" if not missing else "MISSING %s" % missing, flush=True)
     sys.exit(1 if missing else 0)

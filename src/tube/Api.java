@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.7";
+    static final String VERSION = "0.1.8";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -23,8 +23,14 @@ final class Api {
     /** H.264 360p MP4, no conversion. */
     static final int Q_H264 = 3;
 
+    /** H.264 256x144 MP4, small enough for phones that only decode H.264 up to QVGA. yt2009 only. */
+    static final int Q_H264_144 = 4;
+    /** H.263 176x144 + AMR in 3GP at 10 fps: the smallest files, for the weakest phones. yt2009 only. */
+    static final int Q_H263_144 = 5;
+
+    /** Indexed by quality id (ids are what settings store, so they never change). */
     static final String[] Q_NAMES = {
-        "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p"
+        "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p", "H.264 144p", "H.263 144p (3GP)"
     };
 
     /**
@@ -33,8 +39,24 @@ final class Api {
      * H.264 only up to QVGA).
      */
     static int[] qualities(String platform) {
-        if (Util.h264OnlyQvga(platform)) return new int[] { Q_H263, Q_MP4V, Q_MP4V_360 };
-        return new int[] { Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+        if (Util.h264OnlyQvga(platform)) return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360 };
+        return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+    }
+
+    /**
+     * yt2009 addresses that produce each quality, best first. Servers differ
+     * by version: a 404 on one address means "try the next", so a server
+     * without /http_mpeg4_360 still serves its plain /http_mpeg4.
+     */
+    private static String[] yt2009Paths(int quality) {
+        switch (quality) {
+            case Q_H263: return new String[] { "/http_3gp_288?v=" };
+            case Q_MP4V: return new String[] { "/http_mpeg4?v=" };
+            case Q_MP4V_360: return new String[] { "/http_mpeg4_360?v=", "/http_mpeg4?v=" };
+            case Q_H264_144: return new String[] { "/mp4_144?v=" };
+            case Q_H263_144: return new String[] { "/http_3gp?v=" };
+            default: return new String[] { "/channel_fh264_getvideo?v=" };
+        }
     }
 
     /** How long a yt2009 server gets to fetch/convert a video before we move on. */
@@ -510,13 +532,15 @@ final class Api {
                 Stream s = new Stream();
                 s.server = Util.baseOf(e[1]);
                 s.next = idx + 1;
-                boolean threeGp = quality == Q_H263;
+                boolean threeGp = quality == Q_H263 || quality == Q_H263_144;
                 s.ext = threeGp ? "3gp" : "mp4";
                 s.mime = threeGp ? "video/3gpp" : "video/mp4";
                 s.probe = !e[0].equals("L");
                 if (e[0].equals("D")) {
                     s.url = e[1];
                 } else if (e[0].equals("L")) {
+                    // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
+                    if (quality == Q_H264_144 || quality == Q_H263_144) throw new Exception("has no 144p");
                     if (!alive(e[1])) throw new Exception("server unreachable");
                     String u = e[1] + "/direct_url?video_id=" + v.id;
                     if (quality == Q_H263) u += "&codec=h263";
@@ -525,14 +549,24 @@ final class Api {
                     // ignored by the server; helps players that sniff the extension
                     s.url = u + "&ext=." + s.ext;
                 } else {
-                    String path;
-                    if (quality == Q_H263) path = "/http_3gp_288?v=";
-                    else if (quality == Q_MP4V) path = "/http_mpeg4?v=";
-                    else if (quality == Q_MP4V_360) path = "/http_mpeg4_360?v=";
-                    else path = "/channel_fh264_getvideo?v=";
+                    String[] paths = yt2009Paths(quality);
                     say("Asking " + host(e[1]) + " to get the video ready (up to " + (PREPARE_TIMEOUT / 1000) + " s)");
-                    Log.add("ask " + e[1] + path + v.id);
-                    s.url = Net.redirect(e[1] + path + v.id, PREPARE_TIMEOUT);
+                    for (int pi = 0; pi < paths.length; pi++) {
+                        Log.add("ask " + e[1] + paths[pi] + v.id);
+                        try {
+                            s.url = Net.redirect(e[1] + paths[pi] + v.id, PREPARE_TIMEOUT);
+                            break;
+                        } catch (java.io.IOException io) {
+                            String m = io.getMessage();
+                            boolean missing = m != null && m.startsWith("HTTP 404");
+                            if (missing && pi + 1 < paths.length) continue;
+                            if (missing) throw new Exception("doesn't offer this quality");
+                            // the server keeps converting after we stop waiting, so a later try is quick
+                            if (m != null && m.startsWith("no answer")) throw new Exception("still preparing the video; try again in a minute");
+                            throw io;
+                        }
+                    }
+                    if (s.url.indexOf("/auth") >= 0 && s.url.indexOf(".html") >= 0) throw new Exception("needs a sign-in");
                 }
                 return s;
             } catch (Exception ex) {

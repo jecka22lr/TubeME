@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.8
+
+- Two 144p qualities, both from yt2009 servers: "H.264 144p" (256x144 MP4, within what S60 3rd/5th
+  Edition can decode) and "H.263 144p (3GP)" (176x144, 10 fps, the smallest files)
+- MPEG-4 360p falls back to a yt2009 server's plain /http_mpeg4 when it has no /http_mpeg4_360
+  (servers differ by version)
+- Clearer server messages: "doesn't offer this quality", "needs a sign-in", and "still preparing
+  the video; try again in a minute" when a conversion outlasts the 90 s wait
+
 ## 0.1.7
 
 - H.264 360p is no longer offered on S60 3rd and 5th Edition (it plays as sound only there); a saved

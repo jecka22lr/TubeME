@@ -89,6 +89,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         qNames = new String[qIds.length];
         for (int i = 0; i < qIds.length; i++) qNames[i] = Api.Q_NAMES[qIds[i]];
         if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
+        Log.add("qualities offered: " + qIds.length);
         api.progress = this;
         Log.add("TubeME " + Api.VERSION + " on " + System.getProperty("microedition.platform"));
         Log.add("symbian=" + Util.isSymbian() + " files=" + Util.hasFiles() + " mmapi=" + System.getProperty("microedition.media.version")

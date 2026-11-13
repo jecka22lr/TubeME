@@ -51,9 +51,13 @@ public class Tests {
         ok(!Util.h264OnlyQvga("SonyEricssonK800i/R1KG001"), "non-Symbian: no note");
         ok(!Util.h264OnlyQvga(null), "no platform: no note");
 
-        eq(Integer.valueOf(Api.qualities(c6).length), Integer.valueOf(3), "H.264 hidden on S60 5th");
-        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(4), "H.264 offered on Symbian^3");
-        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(4), "H.264 offered when platform unknown");
+        int[] qc6 = Api.qualities(c6);
+        eq(Integer.valueOf(qc6.length), Integer.valueOf(5), "S60 5th quality count");
+        for (int i = 0; i < qc6.length; i++) ok(qc6[i] != Api.Q_H264, "H.264 360p hidden on S60 5th");
+        ok(qc6[1] == Api.Q_H264_144, "H.264 144p still offered on S60 5th");
+        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(6), "all offered on Symbian^3");
+        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(6), "all offered when platform unknown");
+        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(6), "a name per quality id");
 
         // --- instance list ---
         Api api = new Api();
@@ -191,6 +195,28 @@ public class Tests {
         Video rv2 = new Video(); rv2.id = "abcDEF_-002";
         ok(rd.stream(rv2, Api.Q_H264, 0).url.startsWith(L), "retried after the wait");
         Api.RETRY_DEAD_AFTER = 120000;
+
+        // --- 144p and servers of different versions ---
+        String OLD = "http://127.0.0.1:18086";
+        Api q1 = new Api(); q1.legacy = new Vector(); q1.legacy.addElement(L); q1.yt2009.addElement(Y);
+        Video qv = new Video(); qv.id = "abcDEF_-001";
+        Api.Stream s144 = q1.stream(qv, Api.Q_H264_144, 0);
+        eq(s144.url, Y + "/assets/abcDEF_-001-mp4_144.bin", "H.264 144p comes from yt2009, YtAPILegacy skipped");
+        eq(s144.ext, "mp4", "144p mp4 ext");
+        Video qv2 = new Video(); qv2.id = "abcDEF_-002";
+        Api.Stream s3 = q1.stream(qv2, Api.Q_H263_144, 0);
+        eq(s3.url, Y + "/assets/abcDEF_-002-http_3gp.bin", "H.263 144p address");
+        eq(s3.ext, "3gp", "144p 3gp ext");
+        Api lo = new Api(); lo.legacy = new Vector(); lo.legacy.addElement(L);
+        threw = false; try { lo.stream(qv, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("has no 144p") >= 0; }
+        ok(threw, "YtAPILegacy alone can't do 144p, and says so");
+        Api old = new Api(); old.legacy = new Vector(); old.yt2009.addElement(OLD);
+        eq(old.stream(qv, Api.Q_MP4V_360, 0).url, OLD + "/assets/abcDEF_-001-mpeg4.mp4", "360p falls back to /http_mpeg4 on a stock server");
+        threw = false; try { old.stream(qv2, Api.Q_H263, 0); } catch (Exception e) { threw = e.getMessage().indexOf("doesn't offer this quality") >= 0; }
+        ok(threw, "missing quality reported");
+        Video qv3 = new Video(); qv3.id = "abcDEF_-003";
+        threw = false; try { old.stream(qv3, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("needs a sign-in") >= 0; }
+        ok(threw, "sign-in redirect is not mistaken for a video");
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
