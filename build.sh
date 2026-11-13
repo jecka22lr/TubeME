@@ -30,4 +30,6 @@ SIZE=$(wc -c < dist/TubeME.jar | tr -d ' ')
   echo "MIDlet-Jar-Size: $SIZE"
 } | grep -v '^$' > dist/TubeME.jad
 (cd dist && rm -f TubeME-$VERSION.zip && zip -q TubeME-$VERSION.zip TubeME.jar TubeME.jad) 2>/dev/null || true
+SERVER_VERSION=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' server/tubeme_server.py)
+(cd server && rm -f ../dist/TubeME-server-*.zip && zip -q ../dist/TubeME-server-$SERVER_VERSION.zip tubeme_server.py README.md test_server.py) 2>/dev/null || true
 echo "Done: dist/TubeME.jar ($SIZE bytes), dist/TubeME.jad"

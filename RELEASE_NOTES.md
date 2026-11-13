@@ -1,5 +1,26 @@
-Self-hosting. Confirmed on a Nokia C6-00 with the public servers: downloading, RealPlayer mode and the quality picker work. The new server has not been run against YouTube or a real phone yet.
+First public build of TubeME, a YouTube client for J2ME phones (MIDP 2.0 / CLDC 1.1), plus a small server you can run on your own PC.
 
-- New: TubeME server (server/tubeme_server.py), a small Python server for your own PC that fetches, converts and serves video for the phone. Setup in server/README.md
-- New qualities from that server: MPEG-4 240p and H.264 240p
-- Settings > My TubeME server: asked first when set, public servers stay as backup; conversion progress shown in percent
+**Downloads**
+- `TubeME-0.2.0.zip`: the app (jar + jad). Also attached separately as `TubeME.jar` / `TubeME.jad`
+- `TubeME-server-0.2.0.zip`: the optional PC server (Python script + setup guide)
+
+**The app**
+- Search, popular, open by ID or link, video page with thumbnail
+- Uses public YtAPILegacy, yt2009 and Invidious servers from a shared list: tested from the phone at every start, fastest first, with failover
+- Playback on Symbian: RealPlayer streaming, download then RealPlayer, in-app player, or the phone's browser. Other phones: download then play, in-app (MMAPI), or the phone's player
+- Qualities from H.263 144p 3GP up to H.264 360p; when a server lacks the chosen one the app asks which available quality to use
+- A Log screen that survives crashes, for bug reports
+
+**The server** (`server/README.md`)
+- Fetches, converts and serves video sized for phones, including 240p and 144p, with search and thumbnails
+- Needs Python and ffmpeg; installs and updates yt-dlp and Deno by itself
+- Set its address in Settings > My TubeME server; the public servers stay as backup
+
+**Tested**
+- On a Nokia C6-00 (S60 5th Edition) with the public servers: search, thumbnails, downloading, RealPlayer mode, the quality picker
+- Not yet confirmed on other phones. The server passes its tests offline but has only just started being tried against real YouTube
+
+**Known limits**
+- S60 3rd and 5th Edition decode H.264 only up to 320x240, so H.264 360p is not offered there
+- Public servers differ in which qualities they have, and some conversions never answer
+- The app is unsigned: expect permission prompts
