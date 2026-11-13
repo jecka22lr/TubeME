@@ -41,7 +41,82 @@ def boxes(data):
         i += size
     return out
 
+STUB = r'''
+import json, os, subprocess, sys
+a = sys.argv[1:]
+if "--version" in a: print("stub-1"); sys.exit(0)
+url = a[-1]
+vid = url.split("v=")[-1]
+if url.startswith("ytsearch15:"):
+    assert "--flat-playlist" in a and "-J" in a
+    print(json.dumps({"entries": [{"id": "realvideo%02d" % i, "title": "Result %d" % i, "channel": "Chan", "duration": 61.0, "view_count": 5}
+                                   for i in range(2)] + [{"id": "short", "title": "not a video id"}, None]})); sys.exit(0)
+if "-J" in a:
+    if vid == "onlyimages1" and "--ignore-no-formats-error" not in a:
+        sys.stderr.write("ERROR: [youtube] onlyimages1: Requested format is not available\\n"); sys.exit(1)
+    print(json.dumps({"id": vid, "title": "Real title", "uploader": "Up", "duration": 125, "view_count": 9,
+                      "upload_date": "20260102", "description": "d" * 3000})); sys.exit(0)
+assert "-f" in a and "bv*" in a[a.index("-f") + 1] and "--merge-output-format" in a and "--no-simulate" in a
+if vid == "onlyimages1":
+    sys.stderr.write("WARNING: [youtube] No supported JavaScript runtime could be found.\\n"
+                     "WARNING: Only images are available for download. use --list-formats to see them\\n"
+                     "ERROR: [youtube] onlyimages1: Requested format is not available. Use --list-formats for a list of available formats\\n")
+    sys.exit(1)
+out = a[a.index("-o") + 1].replace("%(id)s", vid).replace("%(ext)s", "mkv")   # as if picture and sound were joined
+subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-f", "lavfi", "-i",
+                "sine=frequency=300", "-t", "4", "-c:v", "mpeg4", "-c:a", "aac", out], check=True)
+print("some other line"); print(out)
+'''
+
+def stub_phase():
+    """The real (non-demo) code paths, with a stand-in for yt-dlp so no internet is needed."""
+    global BASE
+    cache = tempfile.mkdtemp(prefix="tubeme-stub-")
+    stub = os.path.join(cache, "stub.py"); open(stub, "w").write(STUB)
+    env = dict(os.environ, TUBEME_YTDLP='"%s" "%s"' % (sys.executable, stub))
+    old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 1)
+    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--no-update", "--port", str(PORT + 1), "--cache", cache],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    try:
+        for _ in range(100):
+            try:
+                get("/tubeme"); break
+            except Exception:
+                time.sleep(0.2)
+        code, res = js("/search?q=x")
+        ok(code == 200 and [r["id"] for r in res] == ["realvideo00", "realvideo01"] and res[0]["author"] == "Chan" and res[0]["seconds"] == 61,
+           "search through yt-dlp, junk entries dropped")
+        code, d = js("/info?id=realvideo00")
+        ok(code == 200 and d["title"] == "Real title" and d["author"] == "Up" and d["published"] == "2026-01-02" and len(d["description"]) == 1500,
+           "info through yt-dlp")
+        ok(js("/info?id=onlyimages1")[0] == 200, "details still load when YouTube offers no formats")
+        def wait(vid, key):
+            t0 = time.time()
+            while time.time() - t0 < 60:
+                st = js("/prepare?id=%s&q=%s" % (vid, key))[1]
+                if st["state"] in ("ready", "error"): return st
+                time.sleep(0.2)
+            return {"state": "timeout"}
+        st = wait("realvideo00", "mp4v-240")
+        ok(st["state"] == "ready", "joined (mkv) source converts: %s" % st)
+        tmp = os.path.join(cache, "o.mp4"); open(tmp, "wb").write(get(st["url"])[2])
+        ok(probe(tmp)[0]["codec_name"] == "mpeg4" and probe(tmp)[0]["width"] == 320, "240p from a joined source")
+        st = wait("realvideo00", "h264-360")
+        open(tmp, "wb").write(get(st["url"])[2]); v, a = probe(tmp)
+        ok(v["codec_name"] == "h264" and a["codec_name"] == "aac" and "Baseline" in v.get("profile", ""),
+           "h264-360 is made when YouTube's file isn't H.264 (%s %s)" % (v["codec_name"], v.get("profile")))
+        st = wait("onlyimages1", "mp4v-240")
+        ok(st["state"] == "error" and "JavaScript runtime (Deno)" in st["error"], "no-formats failure is explained: %s" % st.get("error"))
+    finally:
+        srv.terminate()
+        try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
+        except Exception: out = ""
+        if "--show-log" in sys.argv: print(out)
+        shutil.rmtree(cache, ignore_errors=True)
+        BASE = old
+
 def main():
+    stub_phase()
     cache = tempfile.mkdtemp(prefix="tubeme-test-")
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--port", str(PORT), "--cache", cache],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

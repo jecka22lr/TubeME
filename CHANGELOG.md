@@ -1,5 +1,15 @@
 # Changelog
 
+## Server 0.2.0 (app unchanged)
+
+- Fixed "Requested format is not available" on every video: YouTube gives yt-dlp no video formats
+  unless a JavaScript runtime is present. The server now uses Deno, and downloads it if missing
+- The server installs and updates yt-dlp by itself: at start, every 12 hours, and after a failed
+  request (which is then retried). yt-dlp runs as a separate program, so updates apply at once
+- Wider choice of source formats (picture and sound fetched separately and joined when YouTube has
+  no single 360p file); H.264 360p is converted when the source isn't H.264
+- yt-dlp's own warnings are shown in the server window, and the phone gets a plain explanation
+
 ## 0.2.0
 
 - **TubeME server** (`server/tubeme_server.py`): a small Python server for your own PC that fetches,

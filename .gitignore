@@ -10,3 +10,4 @@ shots/
 test/emu/tour/
 server/cache/
 __pycache__/
+server/tools/

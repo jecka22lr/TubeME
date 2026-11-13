@@ -20,7 +20,8 @@ MPEG-4 270p elsewhere; H.264 360p is not offered on S60 3rd and 5th Edition (see
 
 ## Your own server
 
-`server/tubeme_server.py` is a small Python server for your own PC (Python, ffmpeg and yt-dlp). It
+`server/tubeme_server.py` is a small Python server for your own PC. It needs Python and ffmpeg, and
+installs and updates yt-dlp and Deno by itself. It
 fetches, converts and serves videos for the phone, including 240p and 144p, and answers search and
 thumbnails too. Put its address in Settings > My TubeME server and it is asked first; the public
 servers stay as backup. Setup is in [server/README.md](server/README.md).

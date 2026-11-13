@@ -3,10 +3,12 @@
 
 Run it on a PC, then put its address in TubeME (Settings > My TubeME server).
 
-Needs Python 3.8+, ffmpeg on the PATH, and yt-dlp (pip install yt-dlp).
-Nothing else: the web server is Python's own.
+Needs Python 3.8+ and ffmpeg on the PATH. Everything else it looks after itself:
+at start, and every 12 hours while running, it installs or updates yt-dlp, and it
+fetches Deno (the JavaScript runtime yt-dlp needs for YouTube) if none is installed.
 
     python tubeme_server.py                # serve on port 8765
+    python tubeme_server.py --no-update    # don't install or update anything
     python tubeme_server.py --port 9000 --cache D:\\tubeme-cache --max-cache-mb 4000
     python tubeme_server.py --demo         # no internet needed: test videos only
 
@@ -21,7 +23,9 @@ What the phone app asks for:
 import argparse
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -30,9 +34,10 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -87,8 +92,138 @@ def fit(sw, sh, bw, bh):
     return w, h
 
 
+# What to fetch from YouTube, best choice first: the ready-made 360p file, then any single file up
+# to 360p, then separate picture and sound (which yt-dlp joins with ffmpeg), preferring H.264.
+SOURCE_FORMAT = ("18/b[height<=360][ext=mp4]/bv*[height<=360][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=360]+ba/"
+                 "b[height<=480]/bv*[height<=480]+ba/b/bv*+ba")
+UPDATE_EVERY = 12 * 3600
+DENO_MAX_AGE = 30 * 86400
+
+
+class Tools:
+    """yt-dlp and the JavaScript runtime it needs, kept installed and current.
+
+    yt-dlp is run as a separate program (python -m yt_dlp), so an update takes effect on the very
+    next request without restarting the server."""
+
+    def __init__(self, tools_dir, auto_update):
+        self.dir = tools_dir
+        self.auto = auto_update
+        self.lock = threading.Lock()
+        self.last_update = 0
+        self.js = None
+        # TUBEME_YTDLP swaps in another command (used by the tests)
+        self.cmd = shlex.split(os.environ["TUBEME_YTDLP"]) if os.environ.get("TUBEME_YTDLP") else None
+
+    def ytdlp_version(self):
+        r = run(self.ytdlp_cmd() + ["--version"])
+        return r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
+
+    def ytdlp_cmd(self):
+        return self.cmd or [sys.executable, "-m", "yt_dlp"]
+
+    def update(self, why, force=False):
+        """Installs or updates yt-dlp and makes sure a JavaScript runtime is there.
+        Returns True when it actually looked (it holds off for 10 minutes between looks)."""
+        with self.lock:
+            if not force and time.time() - self.last_update < 600:
+                return False
+            self.last_update = time.time()
+            if self.auto and not self.cmd:
+                before = self.ytdlp_version()
+                log("checking for yt-dlp updates (%s)" % why)
+                pip = [sys.executable, "-m", "pip", "install", "-U", "--quiet", "--disable-pip-version-check",
+                       "yt-dlp[default]"]
+                r = run(pip)
+                if r.returncode and b"externally-managed" in r.stderr:
+                    r = run(pip + ["--break-system-packages"])
+                after = self.ytdlp_version()
+                if r.returncode:
+                    log("couldn't update yt-dlp:", r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:])
+                if after is None:
+                    log("yt-dlp is not installed and couldn't be installed. Run:  pip install -U \"yt-dlp[default]\"")
+                elif after != before:
+                    log("yt-dlp %s -> %s" % (before or "not installed", after))
+                else:
+                    log("yt-dlp %s is current" % after)
+            self.js = self.find_js()
+            return True
+
+    def find_js(self):
+        """A JavaScript runtime for yt-dlp as (name, path-or-None). YouTube hides every video format
+        from yt-dlp without one."""
+        if shutil.which("deno"):
+            return ("deno", None)
+        exe = os.path.join(self.dir, "deno.exe" if os.name == "nt" else "deno")
+        fresh = os.path.exists(exe) and time.time() - os.path.getmtime(exe) < DENO_MAX_AGE
+        if not fresh and self.auto:
+            try:
+                self.fetch_deno(exe)
+            except Exception as e:
+                log("couldn't fetch Deno:", short(e))
+        if os.path.exists(exe):
+            return ("deno", exe)
+        for other in ("node", "bun"):
+            if shutil.which(other):
+                return (other, None)
+        log("NO JAVASCRIPT RUNTIME: YouTube will give yt-dlp no video formats. Install Deno "
+            "(Windows: winget install DenoLand.Deno) and restart.")
+        return None
+
+    def fetch_deno(self, exe):
+        machine = platform.machine().lower()
+        arm = machine in ("arm64", "aarch64")
+        if sys.platform.startswith("win"):
+            target = "aarch64-pc-windows-msvc" if arm else "x86_64-pc-windows-msvc"
+        elif sys.platform == "darwin":
+            target = "aarch64-apple-darwin" if arm else "x86_64-apple-darwin"
+        else:
+            target = "aarch64-unknown-linux-gnu" if arm else "x86_64-unknown-linux-gnu"
+        url = "https://github.com/denoland/deno/releases/latest/download/deno-%s.zip" % target
+        log("fetching Deno (JavaScript runtime for yt-dlp) from", url)
+        os.makedirs(self.dir, exist_ok=True)
+        tmp = exe + ".zip"
+        with urllib.request.urlopen(url, timeout=120) as u, open(tmp, "wb") as f:
+            shutil.copyfileobj(u, f)
+        with zipfile.ZipFile(tmp) as z:
+            name = [n for n in z.namelist() if os.path.basename(n).lower() in ("deno", "deno.exe")][0]
+            with z.open(name) as src, open(exe + ".new", "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        os.remove(tmp)
+        os.replace(exe + ".new", exe)
+        os.chmod(exe, 0o755)
+        log("Deno saved to", exe)
+
+    def ytdlp(self, args, timeout=600):
+        """Runs yt-dlp. Returns its standard output; raises with a readable reason on failure.
+        One automatic retry after an update check, since most failures are an outdated yt-dlp."""
+        for attempt in (0, 1):
+            cmd = self.ytdlp_cmd() + ["--ignore-config", "--no-playlist", "--no-progress"]
+            if self.js:
+                cmd += ["--js-runtimes", self.js[0] + (":" + self.js[1] if self.js[1] else "")]
+                # lets yt-dlp fetch its YouTube challenge solver when the installed one is out of date
+                cmd += ["--remote-components", "ejs:github"]
+            try:
+                r = run(cmd + args, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("YouTube took too long to answer")
+            err = r.stderr.decode("utf-8", "replace")
+            if r.returncode == 0:
+                return r.stdout.decode("utf-8", "replace")
+            for line in err.strip().splitlines()[-12:]:
+                log("  yt-dlp:", line[:300])
+            if attempt == 0 and self.update("a request failed"):
+                continue
+            if "JavaScript runtime" in err or "Only images are available" in err or "challenge solving failed" in err:
+                raise RuntimeError("YouTube gave no video formats: the server's JavaScript runtime (Deno) "
+                                   "is missing or not working. See the server window.")
+            errors = [l for l in err.splitlines() if l.startswith("ERROR:")]
+            raise RuntimeError(errors[-1] if errors else (err.strip().splitlines() or ["yt-dlp failed"])[-1])
+
+
 class Server:
-    def __init__(self, cache, demo, max_cache_mb, workers):
+    def __init__(self, cache, demo, max_cache_mb, workers, tools=None):
+        self.tools = tools
         self.cache = os.path.abspath(cache)
         self.src_dir = os.path.join(self.cache, "src")
         self.out_dir = os.path.join(self.cache, "out")
@@ -118,18 +253,11 @@ class Server:
 
     # ---------- YouTube side ----------
 
-    def ydl(self, opts):
-        import yt_dlp
-        base = {"quiet": True, "no_warnings": True, "noprogress": True}
-        base.update(opts)
-        return yt_dlp.YoutubeDL(base)
-
     def search(self, q):
         if self.demo:
             return [dict(id="demo%07d" % i, title="Demo clip %d (%s)" % (i, q), author="TubeME demo",
                          seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
-        with self.ydl({"extract_flat": True, "skip_download": True}) as y:
-            res = y.extract_info("ytsearch15:" + q, download=False)
+        res = json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "ytsearch15:" + q], timeout=60))
         out = []
         for e in res.get("entries") or []:
             if not e or not ID_RE.match(str(e.get("id", ""))):
@@ -146,8 +274,9 @@ class Server:
             d = dict(id=vid, title="Demo clip %d" % n, author="TubeME demo", seconds=8 + n * 4, views=1000 * n,
                      published="2026-01-01", description="A generated test pattern with a tone.\nNo internet involved.")
         else:
-            with self.ydl({"skip_download": True}) as y:
-                e = y.extract_info("https://www.youtube.com/watch?v=" + vid, download=False)
+            # details don't need a playable format, so a format problem must not hide them
+            e = json.loads(self.tools.ytdlp(["-J", "--skip-download", "--ignore-no-formats-error",
+                                             "https://www.youtube.com/watch?v=" + vid], timeout=90))
             up = e.get("upload_date") or ""
             d = dict(id=vid, title=e.get("title") or "", author=e.get("channel") or e.get("uploader") or "",
                      seconds=int(e.get("duration") or 0), views=int(e.get("view_count") or 0),
@@ -186,7 +315,7 @@ class Server:
             lk = self.src_locks.setdefault(vid, threading.Lock())
         with lk:
             for name in os.listdir(self.src_dir):
-                if name.startswith(vid + ".") and not name.endswith(".part"):
+                if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
                     return os.path.join(self.src_dir, name)
             job["state"] = "fetching"
             if self.demo:
@@ -200,11 +329,17 @@ class Server:
                 if r.returncode:
                     raise RuntimeError("demo source: " + r.stderr.decode("utf-8", "replace")[-300:])
                 return path
-            opts = {"format": "18/best[height<=360][ext=mp4]/best[ext=mp4]/best",
-                    "outtmpl": os.path.join(self.src_dir, "%(id)s.%(ext)s")}
-            with self.ydl(opts) as y:
-                e = y.extract_info("https://www.youtube.com/watch?v=" + vid, download=True)
-                return y.prepare_filename(e)
+            out = self.tools.ytdlp(["-f", SOURCE_FORMAT, "--merge-output-format", "mkv",
+                                    "-o", os.path.join(self.src_dir, "%(id)s.%(ext)s"),
+                                    "--print", "after_move:filepath", "--no-simulate",
+                                    "https://www.youtube.com/watch?v=" + vid])
+            lines = [l.strip() for l in out.splitlines() if l.strip()]
+            if lines and os.path.isfile(lines[-1]):
+                return lines[-1]
+            for name in os.listdir(self.src_dir):
+                if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
+                    return os.path.join(self.src_dir, name)
+            raise RuntimeError("yt-dlp finished but left no file")
 
     # ---------- conversion ----------
 
@@ -237,8 +372,13 @@ class Server:
                 job["state"] = "converting"
                 dur, sw, sh = self.probe(src)
                 cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src]
-                if p.get("copy"):
+                if p.get("copy") and self.codecs(src) == ("h264", "aac"):
                     cmd += ["-c", "copy"]
+                elif p.get("copy"):
+                    # YouTube had no ready-made H.264 file for this one: make an equivalent
+                    cmd += ["-vf", "scale=%d:%d,format=yuv420p" % fit(sw, sh, 640, 360), "-c:v", "libx264",
+                            "-profile:v", "baseline", "-level", "3.0", "-preset", "veryfast", "-b:v", "600k",
+                            "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "96k"]
                 else:
                     bw, bh = p["box"]
                     if p.get("fixed"):
@@ -286,6 +426,13 @@ class Server:
         if kind == "mid":
             return ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "64k"]
         return ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "96k"]
+
+    def codecs(self, src):
+        r = run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "json", src])
+        st = json.loads(r.stdout.decode("utf-8", "replace") or "{}").get("streams") or []
+        v = [x["codec_name"] for x in st if x.get("codec_type") == "video"]
+        a = [x["codec_name"] for x in st if x.get("codec_type") == "audio"]
+        return (v[0] if v else None, a[0] if a else None)
 
     def probe(self, src):
         r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
@@ -462,16 +609,31 @@ def main():
     ap.add_argument("--max-cache-mb", type=int, default=2000, help="delete the oldest files past this size")
     ap.add_argument("--workers", type=int, default=2, help="conversions running at the same time")
     ap.add_argument("--demo", action="store_true", help="no YouTube: generated test videos only")
+    ap.add_argument("--no-update", action="store_true",
+                    help="don't install or update yt-dlp, and don't fetch Deno")
     a = ap.parse_args()
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
             sys.exit("%s was not found. Install ffmpeg and make sure it is on the PATH." % tool)
+    tools = None
     if not a.demo:
-        try:
-            import yt_dlp  # noqa: F401
-        except ImportError:
-            sys.exit("yt-dlp is missing. Install it with:  pip install yt-dlp   (or run with --demo to test without it)")
-    app = Server(a.cache, a.demo, a.max_cache_mb, a.workers)
+        tools = Tools(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"), not a.no_update)
+        tools.update("starting up", force=True)
+        if tools.ytdlp_version() is None:
+            sys.exit("yt-dlp is missing. Install it with:  pip install -U \"yt-dlp[default]\"   "
+                     "(or run with --demo to test without it)")
+        log("yt-dlp %s, JavaScript runtime: %s" % (tools.ytdlp_version(),
+            "none" if not tools.js else tools.js[0] + (" (%s)" % tools.js[1] if tools.js[1] else "")))
+
+        def keep_current():
+            while True:
+                time.sleep(UPDATE_EVERY)
+                tools.update("12 hours since the last check", force=True)
+        if not a.no_update:
+            threading.Thread(target=keep_current, daemon=True).start()
+    ff = run(["ffmpeg", "-version"]).stdout.decode("utf-8", "replace").splitlines()
+    log(ff[0] if ff else "ffmpeg version unknown")
+    app = Server(a.cache, a.demo, a.max_cache_mb, a.workers, tools)
     httpd = ThreadingHTTPServer((a.host, a.port), Handler)
     httpd.daemon_threads = True
     httpd.app = app
