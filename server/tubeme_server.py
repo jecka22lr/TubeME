@@ -3,9 +3,11 @@
 
 Run it on a PC, then put its address in TubeME (Settings > My TubeME server).
 
-Needs Python 3.8+ and ffmpeg on the PATH. Everything else it looks after itself:
-at start, and every 12 hours while running, it installs or updates yt-dlp, and it
-fetches Deno (the JavaScript runtime yt-dlp needs for YouTube) if none is installed.
+Runs on Windows, macOS and Linux. Needs Python 3.8+ and ffmpeg on the PATH. Everything
+else it looks after itself, inside a "tools" folder next to this script (nothing is
+installed system-wide): at start, and every 12 hours while running, it installs or
+updates yt-dlp, and it fetches Deno (the JavaScript runtime yt-dlp needs for YouTube)
+if none is installed.
 
     python tubeme_server.py                # serve on port 8765
     python tubeme_server.py --no-update    # don't install or update anything
@@ -25,7 +27,6 @@ import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import socket
 import subprocess
@@ -37,7 +38,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -108,15 +109,25 @@ class Tools:
 
     def __init__(self, tools_dir, auto_update):
         self.dir = tools_dir
+        # yt-dlp lives in its own folder here, so nothing is installed into the system's Python
+        # (which macOS and most Linux systems refuse anyway)
+        self.pylib = os.path.join(tools_dir, "pylib")
         self.auto = auto_update
         self.lock = threading.Lock()
         self.last_update = 0
         self.js = None
-        # TUBEME_YTDLP swaps in another command (used by the tests)
-        self.cmd = shlex.split(os.environ["TUBEME_YTDLP"]) if os.environ.get("TUBEME_YTDLP") else None
+        # TUBEME_YTDLP (a JSON list) swaps in another command; used by the tests
+        self.cmd = json.loads(os.environ["TUBEME_YTDLP"]) if os.environ.get("TUBEME_YTDLP") else None
+
+    def env(self):
+        e = dict(os.environ)
+        if os.path.isdir(self.pylib):
+            e["PYTHONPATH"] = self.pylib + (os.pathsep + e["PYTHONPATH"] if e.get("PYTHONPATH") else "")
+        e["PYTHONIOENCODING"] = "utf-8"
+        return e
 
     def ytdlp_version(self):
-        r = run(self.ytdlp_cmd() + ["--version"])
+        r = run(self.ytdlp_cmd() + ["--version"], env=self.env())
         return r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else None
 
     def ytdlp_cmd(self):
@@ -132,16 +143,17 @@ class Tools:
             if self.auto and not self.cmd:
                 before = self.ytdlp_version()
                 log("checking for yt-dlp updates (%s)" % why)
-                pip = [sys.executable, "-m", "pip", "install", "-U", "--quiet", "--disable-pip-version-check",
-                       "yt-dlp[default]"]
-                r = run(pip)
-                if r.returncode and b"externally-managed" in r.stderr:
-                    r = run(pip + ["--break-system-packages"])
+                os.makedirs(self.pylib, exist_ok=True)
+                r = run([sys.executable, "-m", "pip", "install", "-U", "--quiet", "--disable-pip-version-check",
+                         "--no-warn-script-location", "--target", self.pylib, "yt-dlp[default]"])
                 after = self.ytdlp_version()
                 if r.returncode:
-                    log("couldn't update yt-dlp:", r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:])
+                    tail = r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:]
+                    log("couldn't update yt-dlp:", tail[0][:300] if tail else "pip failed")
+                    if b"No module named pip" in r.stderr:
+                        log("this Python has no pip. Debian/Ubuntu: sudo apt install python3-pip")
                 if after is None:
-                    log("yt-dlp is not installed and couldn't be installed. Run:  pip install -U \"yt-dlp[default]\"")
+                    log("yt-dlp is not installed and couldn't be installed (is pip available, is there internet?)")
                 elif after != before:
                     log("yt-dlp %s -> %s" % (before or "not installed", after))
                 else:
@@ -180,11 +192,31 @@ class Tools:
         else:
             target = "aarch64-unknown-linux-gnu" if arm else "x86_64-unknown-linux-gnu"
         url = "https://github.com/denoland/deno/releases/latest/download/deno-%s.zip" % target
-        log("fetching Deno (JavaScript runtime for yt-dlp) from", url)
+        log("fetching Deno (JavaScript runtime for yt-dlp), about 45 MB, from", url)
         os.makedirs(self.dir, exist_ok=True)
         tmp = exe + ".zip"
-        with urllib.request.urlopen(url, timeout=120) as u, open(tmp, "wb") as f:
-            shutil.copyfileobj(u, f)
+        for attempt in (1, 2, 3):
+            try:
+                # 30 s without a single byte counts as stalled, instead of waiting forever
+                with urllib.request.urlopen(url, timeout=30) as u, open(tmp, "wb") as f:
+                    total = int(u.headers.get("Content-Length") or 0)
+                    done, shown = 0, time.time()
+                    while True:
+                        chunk = u.read(262144)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        done += len(chunk)
+                        if time.time() - shown >= 5:
+                            shown = time.time()
+                            log("  Deno: %d MB%s" % (done >> 20, " of %d MB" % (total >> 20) if total else ""))
+                if total and done < total:
+                    raise IOError("download stopped at %d of %d MB" % (done >> 20, total >> 20))
+                break
+            except Exception as e:
+                if attempt == 3:
+                    raise
+                log("  Deno download failed (%s), trying again" % short(e))
         with zipfile.ZipFile(tmp) as z:
             name = [n for n in z.namelist() if os.path.basename(n).lower() in ("deno", "deno.exe")][0]
             with z.open(name) as src, open(exe + ".new", "wb") as dst:
@@ -204,7 +236,7 @@ class Tools:
                 # lets yt-dlp fetch its YouTube challenge solver when the installed one is out of date
                 cmd += ["--remote-components", "ejs:github"]
             try:
-                r = run(cmd + args, timeout=timeout)
+                r = run(cmd + args, timeout=timeout, env=self.env())
             except subprocess.TimeoutExpired:
                 raise RuntimeError("YouTube took too long to answer")
             err = r.stderr.decode("utf-8", "replace")
@@ -614,14 +646,17 @@ def main():
     a = ap.parse_args()
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
-            sys.exit("%s was not found. Install ffmpeg and make sure it is on the PATH." % tool)
+            how = ("winget install Gyan.FFmpeg" if os.name == "nt" else "brew install ffmpeg" if sys.platform == "darwin"
+                   else "sudo apt install ffmpeg  (or your distribution's equivalent)")
+            sys.exit("%s was not found. Install ffmpeg (%s) and make sure it is on the PATH." % (tool, how))
     tools = None
     if not a.demo:
         tools = Tools(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"), not a.no_update)
         tools.update("starting up", force=True)
         if tools.ytdlp_version() is None:
-            sys.exit("yt-dlp is missing. Install it with:  pip install -U \"yt-dlp[default]\"   "
-                     "(or run with --demo to test without it)")
+            sys.exit("yt-dlp is missing%s. Install it with:  %s -m pip install -U \"yt-dlp[default]\"   "
+                     "(or run with --demo to test without it)"
+                     % (" and --no-update is set" if a.no_update else "", os.path.basename(sys.executable)))
         log("yt-dlp %s, JavaScript runtime: %s" % (tools.ytdlp_version(),
             "none" if not tools.js else tools.js[0] + (" (%s)" % tools.js[1] if tools.js[1] else "")))
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Server 0.3.0 (app unchanged)
+
+- Runs on macOS and Linux as well as Windows, and is tested on all three for every change
+- yt-dlp is installed into a `tools` folder next to the script instead of the system Python, so it
+  works where system-wide `pip install` is refused (macOS with Homebrew, Debian, Ubuntu, Fedora)
+- The Deno download shows progress every few seconds, gives up on a stalled connection after 30 s
+  and retries, instead of sitting silent
+- Setup hints per system when ffmpeg or pip is missing
+
 ## Server 0.2.0 (app unchanged)
 
 - Fixed "Requested format is not available" on every video: YouTube gives yt-dlp no video formats

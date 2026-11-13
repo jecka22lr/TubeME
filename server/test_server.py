@@ -73,7 +73,7 @@ def stub_phase():
     global BASE
     cache = tempfile.mkdtemp(prefix="tubeme-stub-")
     stub = os.path.join(cache, "stub.py"); open(stub, "w").write(STUB)
-    env = dict(os.environ, TUBEME_YTDLP='"%s" "%s"' % (sys.executable, stub))
+    env = dict(os.environ, TUBEME_YTDLP=json.dumps([sys.executable, stub]))
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 1)
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--no-update", "--port", str(PORT + 1), "--cache", cache],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -115,7 +115,44 @@ def stub_phase():
         shutil.rmtree(cache, ignore_errors=True)
         BASE = old
 
+def online_phase():
+    """A real first start (needs internet): yt-dlp gets installed into tools/, Deno is fetched and runs."""
+    global BASE
+    work = tempfile.mkdtemp(prefix="tubeme-online-")
+    script = os.path.join(work, "tubeme_server.py"); shutil.copy(os.path.join(HERE, "tubeme_server.py"), script)
+    env = dict(os.environ); env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
+                                                           if not any(os.path.exists(os.path.join(p, n)) for n in ("deno", "deno.exe")))
+    old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 2)
+    srv = subprocess.Popen([sys.executable, script, "--port", str(PORT + 2)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    try:
+        up = False
+        for _ in range(900):   # first start downloads ~45 MB
+            try:
+                get("/tubeme"); up = True; break
+            except Exception:
+                if srv.poll() is not None: break
+                time.sleep(0.5)
+        ok(up, "server starts from nothing on %s" % sys.platform)
+        exe = os.path.join(work, "tools", "deno.exe" if os.name == "nt" else "deno")
+        ok(os.path.isfile(exe), "Deno was fetched into tools/")
+        v = subprocess.run([exe, "--version"], stdout=subprocess.PIPE).stdout.decode("utf-8", "replace")
+        ok(v.startswith("deno "), "the fetched Deno runs here: %s" % v.splitlines()[0] if v else "no output")
+        ok(os.path.isdir(os.path.join(work, "tools", "pylib", "yt_dlp")), "yt-dlp was installed into tools/pylib, not the system")
+        e2 = dict(os.environ, PYTHONPATH=os.path.join(work, "tools", "pylib"))
+        yv = subprocess.run([sys.executable, "-m", "yt_dlp", "--version"], stdout=subprocess.PIPE, env=e2).stdout.decode().strip()
+        ok(len(yv) >= 8 and yv[:2] == "20", "that yt-dlp runs: %s" % yv)
+        code, info = js("/tubeme")
+        ok(code == 200 and info["demo"] is False and len(info["qualities"]) >= 6, "serving for real with %d qualities" % len(info["qualities"]))
+    finally:
+        srv.terminate()
+        try: out = srv.communicate(timeout=10)[0].decode("utf-8", "replace")
+        except Exception: out = ""
+        if "--show-log" in sys.argv or not up: print(out)
+        shutil.rmtree(work, ignore_errors=True)
+        BASE = old
+
 def main():
+    if "--online" in sys.argv: online_phase()
     stub_phase()
     cache = tempfile.mkdtemp(prefix="tubeme-test-")
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--port", str(PORT), "--cache", cache],

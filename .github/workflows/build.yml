@@ -26,10 +26,6 @@ jobs:
           unzip -q pg.zip && cp proguard-7.4.2/lib/proguard.jar tools/
       - run: ./build.sh
       - run: ./test/run.sh
-      - name: Server tests (demo mode)
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          python3 server/test_server.py
       - uses: actions/upload-artifact@v4
         with:
           name: TubeME
@@ -45,3 +41,36 @@ jobs:
             dist/TubeME.jad
             dist/TubeME-*.zip
           body_path: RELEASE_NOTES.md
+
+  # The server on every system it claims to run on: a real first start (installs yt-dlp, fetches
+  # Deno), then every quality converted and served. No YouTube involved.
+  server:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: ubuntu-latest
+            python: '3.9'
+          - os: macos-latest
+            python: '3.12'
+          - os: windows-latest
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - name: Server tests
+        run: python server/test_server.py --online --show-log
