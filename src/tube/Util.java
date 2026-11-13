@@ -7,6 +7,14 @@ import java.util.Vector;
 final class Util {
     static final Random RND = new Random();
 
+    /**
+     * Held while opening any connection or file. Opening is what can raise a
+     * permission prompt, and two prompts at once (a file prompt while the
+     * background server test asks for the network) can freeze the Java
+     * runtime on S60 so badly the app can't even be started again.
+     */
+    static final Object OPENING = new Object();
+
     private Util() {}
 
     /** Percent-encodes as UTF-8. */

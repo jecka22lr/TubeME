@@ -14,7 +14,10 @@ final class Net {
     private Net() {}
 
     private static HttpConnection raw(String url) throws IOException {
-        HttpConnection c = (HttpConnection) Connector.open(url, Connector.READ, true);
+        HttpConnection c;
+        synchronized (Util.OPENING) {
+            c = (HttpConnection) Connector.open(url, Connector.READ, true);
+        }
         c.setRequestMethod(HttpConnection.GET);
         c.setRequestProperty("User-Agent", UA);
         c.setRequestProperty("Accept", "*/*");

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4
+
+- Fixed the app freezing (and then refusing to start) when saving the Log, or saving anything, while
+  the start-up server test was running: two permission prompts at the same moment could lock up
+  the phone's Java. Connections and files are now opened one at a time, so only one prompt can
+  ever be on screen
+
 ## 0.2.3 and server 0.4.1
 
 - Fixed searching and Popular getting stuck on "Searching...": a server that sent its headers and

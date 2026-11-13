@@ -15,6 +15,12 @@ import javax.microedition.io.file.FileSystemRegistry;
 final class Files {
     private Files() {}
 
+    private static FileConnection open(String url, int mode) throws java.io.IOException {
+        synchronized (Util.OPENING) {
+            return (FileConnection) Connector.open(url, mode);
+        }
+    }
+
     private static FileConnection outFc;
 
     /** Opens (replacing) path for writing. One file at a time; pair with closeOut(). */
@@ -49,7 +55,10 @@ final class Files {
             if (p != null && p.length() > 0) c.addElement(norm(p));
         }
         try {
-            Enumeration e = FileSystemRegistry.listRoots();
+            Enumeration e;
+            synchronized (Util.OPENING) {
+                e = FileSystemRegistry.listRoots();
+            }
             Vector roots = new Vector();
             while (e.hasMoreElements()) roots.addElement((String) e.nextElement());
             // memory card style roots first (E:/, SDCard/, ...), C:/ last
@@ -82,7 +91,7 @@ final class Files {
     }
 
     private static void probe(String dir) throws Exception {
-        FileConnection fc = (FileConnection) Connector.open(dir + "tubeme.tmp", Connector.READ_WRITE);
+        FileConnection fc = open(dir + "tubeme.tmp", Connector.READ_WRITE);
         try {
             if (fc.exists()) fc.delete();
             fc.create();
@@ -97,7 +106,7 @@ final class Files {
 
     /** Opens (replacing) a file for writing. Caller closes both ends via close(). */
     static FileConnection create(String url) throws Exception {
-        FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+        FileConnection fc = open(url, Connector.READ_WRITE);
         if (fc.exists()) fc.delete();
         fc.create();
         return fc;
@@ -137,7 +146,7 @@ final class Files {
 
     static void delete(String url) {
         try {
-            FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+            FileConnection fc = open(url, Connector.READ_WRITE);
             if (fc.exists()) fc.delete();
             fc.close();
         } catch (Throwable t) {

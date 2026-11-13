@@ -119,6 +119,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         new Thread(new Runnable() {
             public void run() {
                 try {
+                    // let the menu settle first, so the network prompt doesn't land mid-launch
+                    Thread.sleep(1500);
                     freshServers(0);
                     api.sweep(false);
                 } catch (Throwable t) {
