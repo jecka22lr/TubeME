@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3 and server 0.4.1
+
+- Fixed searching and Popular getting stuck on "Searching...": a server that sent its headers and
+  then stalled could hold a search forever (only the wait for the first answer had a time limit,
+  not the reading). Every request now has a limit for the whole exchange
+- Fixed the same hang spreading: while the server-list update hung at start-up, every search
+  waited for it. Searches now go ahead with the list they have
+- Your own server gets 75 s for search, details and comments (it runs yt-dlp for them)
+- The wait screen says which server is being asked and why one was skipped
+- Popular works from your own server (new `/popular` address, using YouTube's "hype" charts since
+  the Trending page is gone). A server without it is skipped for Popular without being marked down
+
 ## 0.2.2 and server 0.4.0
 
 - Comments: a "Comments" entry in the video menu shows up to 30 top comments with author, likes

@@ -47,6 +47,9 @@ a = sys.argv[1:]
 if "--version" in a: print("stub-1"); sys.exit(0)
 url = a[-1]
 vid = url.split("v=")[-1]
+if "playlist?list=OL" in url:
+    assert "--flat-playlist" in a and a[a.index("--playlist-end") + 1] == "25"
+    print(json.dumps({"entries": [{"id": "popvideo%03d" % i, "title": "Hot %d" % i, "uploader": "Up", "duration": 30} for i in range(3)]})); sys.exit(0)
 if url.startswith("ytsearch15:"):
     assert "--flat-playlist" in a and "-J" in a
     print(json.dumps({"entries": [{"id": "realvideo%02d" % i, "title": "Result %d" % i, "channel": "Chan", "duration": 61.0, "view_count": 5}
@@ -94,6 +97,9 @@ def stub_phase():
         ok(code == 200 and d["title"] == "Real title" and d["author"] == "Up" and d["published"] == "2026-01-02" and len(d["description"]) == 1500,
            "info through yt-dlp")
         ok(js("/info?id=onlyimages1")[0] == 200, "details still load when YouTube offers no formats")
+        code, pop = js("/popular")
+        ok(code == 200 and [p["id"] for p in pop] == ["popvideo000", "popvideo001", "popvideo002"] and pop[0]["author"] == "Up",
+           "popular from YouTube's charts through yt-dlp")
         code, cm = js("/comments?id=realvideo00")
         ok(code == 200 and len(cm) == 2 and cm[0] == {"author": "someone", "text": "x" * 600, "likes": 4, "when": "2 days ago"}
            and cm[1]["likes"] == 0 and cm[1]["when"] == "", "comments through yt-dlp, trimmed and cleaned")
@@ -178,6 +184,8 @@ def main():
         code, res = js("/search?q=cats%20%26%20dogs")
         ok(code == 200 and len(res) == 3 and res[0]["id"] == "demo0000001" and res[0]["seconds"] == 12, "search")
         ok(js("/search?q=")[0] == 400, "empty search refused")
+        code, pop = js("/popular")
+        ok(code == 200 and len(pop) == 4 and pop[0]["title"] == "Popular demo clip 1", "popular")
         vid = res[0]["id"]
         code, d = js("/info?id=" + vid)
         ok(code == 200 and d["title"] == "Demo clip 1" and d["seconds"] == 12 and "description" in d, "info")

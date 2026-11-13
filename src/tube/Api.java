@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.2.2";
+    static final String VERSION = "0.2.3";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -158,6 +158,12 @@ final class Api {
     }
 
     static long POLL_EVERY = 1500;
+    /** Your own server runs yt-dlp for search, details and comments, which can take a while. */
+    static long OWN_TIMEOUT = 75000;
+
+    private static long metaTimeout(String kind) {
+        return kind.equals("T") ? OWN_TIMEOUT : Net.TIMEOUT;
+    }
 
     /** How many video servers that aren't known to be down can serve this quality, as far as we know. */
     int serversFor(int quality) {
@@ -515,7 +521,7 @@ final class Api {
 
     Vector popular() throws Exception {
         return list("/get_top_videos.php",
-                "/api/v1/popular?fields=videoId,title,author,lengthSeconds,viewCount", null);
+                "/api/v1/popular?fields=videoId,title,author,lengthSeconds,viewCount", "/popular");
     }
 
     /** path for each kind of server; a null path means that kind can't answer this. */
@@ -526,8 +532,9 @@ final class Api {
             String[] e = (String[]) order.elementAt(k);
             String path = e[0].equals("L") ? legacyPath : e[0].equals("T") ? ownPath : invPath;
             if (path == null) continue;
+            say(e[0].equals("T") ? "Asking your server" : "Asking " + host(e[1]));
             try {
-                Object o = Json.parse(Net.getText(e[1] + path));
+                Object o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 if (!(o instanceof Vector)) throw new Exception(errorOf(o));
                 Vector in = (Vector) o;
                 Vector out = new Vector();
@@ -541,7 +548,11 @@ final class Api {
                 return out;
             } catch (Exception ex) {
                 Log.err("list " + e[1], ex);
-                failed(e[1], ex);
+                String m = ex.getMessage();
+                boolean notHere = m != null && m.startsWith("HTTP 404");
+                // "I don't have that page" (an older server without /popular) says nothing about its search
+                say(host(e[1]) + (notHere ? ": doesn't have this list" : ": " + msg(ex)));
+                if (!notHere) failed(e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
             }
@@ -567,10 +578,12 @@ final class Api {
                         : mine ? "/info?id=" + id
                         : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,lengthSeconds,viewCount,"
                         + "description,publishedText,formatStreams";
-                o = Json.parse(Net.getText(e[1] + path));
+                say(mine ? "Asking your server" : "Asking " + host(e[1]));
+                o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
                 Log.err("info " + e[1], ex);
+                say(host(e[1]) + ": " + msg(ex));
                 failed(e[1], ex);
                 last = ex;
                 if (e[1].equals(lastGood)) lastGood = null;
@@ -618,7 +631,8 @@ final class Api {
                 String path = leg ? "/get-ytvideo-info.php?video_id=" + id
                         : mine ? "/comments?id=" + id
                         : "/api/v1/comments/" + id + "?fields=comments";
-                Object o = Json.parse(Net.getText(e[1] + path));
+                say(mine ? "Asking your server" : "Asking " + host(e[1]));
+                Object o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 Vector in = o instanceof Vector ? (Vector) o : Json.arr(o, "comments");
                 if (!(o instanceof Vector) && !(o instanceof Hashtable)) throw new Exception("Bad answer");
                 if (o instanceof Hashtable && Json.str(o, "error").length() > 0 && in.size() == 0) throw new Exception(Json.str(o, "error"));

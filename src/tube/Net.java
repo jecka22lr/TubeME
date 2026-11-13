@@ -51,7 +51,38 @@ final class Net {
 
     /** Body of url, at most max bytes. */
     static byte[] get(String url, int max) throws IOException {
-        HttpConnection c = open(url);
+        return get(url, max, TIMEOUT);
+    }
+
+    /**
+     * Body of url, at most max bytes, all of it within timeoutMs. The limit
+     * covers reading the body too: a server that sends headers and then
+     * stalls would otherwise hang the caller forever.
+     */
+    static byte[] get(String url, int max, long timeoutMs) throws IOException {
+        Job j = new Job(3, url);
+        j.max = max;
+        return (byte[]) runJob(j, timeoutMs).result;
+    }
+
+    /** The old untimed fetch; only ever run inside a Job. */
+    private static byte[] fetch(String url, int max, Job j) throws IOException {
+        HttpConnection c = null;
+        for (int hop = 0; ; hop++) {
+            if (hop >= 6) throw new IOException("Too many redirects");
+            c = raw(url);
+            j.c = c;
+            if (j.abandoned) throw new IOException("abandoned");
+            int code = c.getResponseCode();
+            if (code >= 200 && code < 300) break;
+            String loc = (code >= 300 && code < 400) ? c.getHeaderField("Location") : null;
+            close(c);
+            if (loc == null) {
+                Log.add("http " + code + " " + url);
+                throw new IOException("HTTP " + code);
+            }
+            url = Util.resolve(url, loc);
+        }
         InputStream in = null;
         try {
             in = c.openInputStream();
@@ -72,7 +103,11 @@ final class Net {
     }
 
     static String getText(String url) throws IOException {
-        byte[] d = get(url, 400000);
+        return getText(url, TIMEOUT);
+    }
+
+    static String getText(String url, long timeoutMs) throws IOException {
+        byte[] d = get(url, 400000, timeoutMs);
         return Util.utf8(d, d.length);
     }
 
@@ -89,10 +124,13 @@ final class Net {
      * has no socket timeouts, and a server that never answers would
      * otherwise hang the task forever with nothing on screen.
      * kind 0 = response code, 1 = redirect target, 2 = response code with
-     * the connection left open in Job.c for the caller.
+     * the connection left open in Job.c for the caller, 3 = the whole body.
      */
     private static Job runJob(int kind, String url, long timeoutMs) throws IOException {
-        Job j = new Job(kind, url);
+        return runJob(new Job(kind, url), timeoutMs);
+    }
+
+    private static Job runJob(Job j, long timeoutMs) throws IOException {
         new Thread(j).start();
         long end = System.currentTimeMillis() + timeoutMs;
         synchronized (j) {
@@ -105,9 +143,17 @@ final class Net {
                 }
             }
             if (!j.done) {
-                // the helper closes the connection itself if it ever gets one
+                // the helper closes the connection itself if it ever gets one; closing it from
+                // here can block until the stuck read gives up, so that happens on its own thread
                 j.abandoned = true;
-                close(j.c);
+                final HttpConnection stuck = j.c;
+                if (stuck != null) {
+                    new Thread(new Runnable() {
+                        public void run() {
+                            close(stuck);
+                        }
+                    }).start();
+                }
                 throw new IOException("no answer after " + (timeoutMs / 1000) + " s");
             }
         }
@@ -124,7 +170,8 @@ final class Net {
         HttpConnection c;
         Object result;
         Throwable error;
-        boolean done, abandoned;
+        int max;
+        volatile boolean done, abandoned;
 
         Job(int kind, String url) {
             this.kind = kind;
@@ -133,14 +180,19 @@ final class Net {
 
         public void run() {
             try {
-                c = raw(url);
-                result = kind == 1 ? (Object) redirectOf(c, url) : new Integer(c.getResponseCode());
+                if (kind == 3) {
+                    result = fetch(url, max, this);
+                } else {
+                    c = raw(url);
+                    result = kind == 1 ? (Object) redirectOf(c, url) : new Integer(c.getResponseCode());
+                }
             } catch (Throwable t) {
                 error = t;
             }
             synchronized (this) {
                 done = true;
                 // only a successful, still-wanted kind 2 hands its connection on
+                // (kind 3 has closed its own already; closing again is harmless)
                 if (kind != 2 || error != null || abandoned) close(c);
                 notifyAll();
             }

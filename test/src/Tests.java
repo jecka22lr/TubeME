@@ -312,11 +312,16 @@ public class Tests {
         eq(Api.thumbUrl(oi, 360), OWN + "/thumb?id=abcDEF_-001&w=320", "own thumb sized for the screen");
         eq(Api.thumbUrl(oi, 176), OWN + "/thumb?id=abcDEF_-001&w=120", "own thumb small");
         ok(Net.get(Api.thumbUrl(oi, 360), 80000)[1] == 'P', "own thumb fetch");
-        eq(Integer.valueOf(ow.popular().size()), Integer.valueOf(1), "popular skips the own server (it has none)");
+        eq(((Video) ow.popular().elementAt(0)).title, "Own popular", "popular from your own server");
+        Api oldOwn = new Api(); oldOwn.legacy = new Vector(); oldOwn.legacy.addElement(L); oldOwn.own = Y;
+        eq(((Video) oldOwn.popular().elementAt(0)).title, "Top one", "a server without /popular is skipped for popular");
+        ok(oldOwn.status(Y).equals("not tested") || oldOwn.status(Y).startsWith("ok"), "and isn't marked down for it: " + oldOwn.status(Y));
         ok(ow.ping(OWN), "own server pings");
         eq(Integer.valueOf(ow.serversFor(Api.Q_MP4V_240)), Integer.valueOf(1), "240p: only the own server");
         eq(Integer.valueOf(ow.serversFor(Api.Q_H263)), Integer.valueOf(2), "288p: own server doesn't make it, the other two might");
         eq(Integer.valueOf(ow.serversFor(Api.Q_H264_144)), Integer.valueOf(2), "144p: own server and yt2009");
+        eq(wsaid.elementAt(0), "Asking your server", "search says it asks your server");
+        wsaid.removeAllElements();
         Api.Stream os = ow.stream(oi, Api.Q_MP4V_240, 0);
         eq(os.url, OWN + "/file/abcDEF_-001-mp4v-240.mp4", "own server converts and hands over the file");
         eq(os.server, OWN, "own stream server"); ok(os.probe, "own file is checked before playing");
@@ -356,6 +361,21 @@ public class Tests {
         Api cNone = new Api(); cNone.legacy = new Vector(); cNone.legacy.addElement(GONE);
         threw = false; try { cNone.comments("abcDEF_-001"); } catch (Exception e) { threw = e.getMessage().startsWith("No server had the comments"); }
         ok(threw, "no comments anywhere is reported");
+
+        // --- a server that stalls mid-answer can't hold a request forever ---
+        long st0 = System.currentTimeMillis();
+        threw = false; try { Net.getText(L + "/stall", 1500); } catch (java.io.IOException e) { threw = e.getMessage().equals("no answer after 1 s"); }
+        long stTook = System.currentTimeMillis() - st0;
+        ok(threw && stTook < 3500, "stalled body times out (" + stTook + " ms)");
+        Api stl = new Api(); stl.legacy = new Vector(); stl.legacy.addElement(L + "/stall?"); stl.invidious.addElement(INV);
+        final Vector stSaid = new Vector();
+        stl.progress = new Api.Progress() { public void say(String l) { stSaid.addElement(l); } };
+        long keepT = Net.TIMEOUT;
+        st0 = System.currentTimeMillis();
+        Vector sr = stl.search("x");
+        ok(System.currentTimeMillis() - st0 < Net.TIMEOUT + 4000, "search moves past a stalling server");
+        eq(((Video) sr.elementAt(0)).title, "Inv result", "and gets results from the next one");
+        eq(stSaid.elementAt(0), "Asking 127.0.0.1:18081", "progress names the server");
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);

@@ -725,15 +725,21 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     private boolean listTried;
+    private final Object listLock = new Object();
 
-    /** Refreshes the shared server list now and then. Never fatal. */
-    private synchronized void freshServers(int g) {
+    /**
+     * Refreshes the shared server list now and then. Never fatal, and never
+     * makes anything wait: one attempt per session, and a search started
+     * while that attempt is still running goes ahead with the list it has.
+     */
+    private void freshServers(int g) {
         long now = System.currentTimeMillis();
         if (settings.lastUpdate != 0 && now - settings.lastUpdate < UPDATE_EVERY) return;
-        // one attempt per session; a failed one is not recorded as an update,
-        // so the next start tries again instead of waiting three days
-        if (listTried) return;
-        listTried = true;
+        // a failed attempt is not recorded as an update, so the next start tries again
+        synchronized (listLock) {
+            if (listTried) return;
+            listTried = true;
+        }
         try {
             api.updateInstances(settings.listUrl);
             settings.lastUpdate = now;

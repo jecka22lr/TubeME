@@ -45,6 +45,10 @@ class H(BaseHTTPRequestHandler):
                     "ytapilegacy": ["http://127.0.0.1:%d" % DEAD, "http://127.0.0.1:%d" % LEG]})
             if p == "/legacyonly.json":   # a list with one YtAPILegacy server and nothing else
                 return self.send(200, {"invidious": [], "yt2009": [], "ytapilegacy": ["http://127.0.0.1:%d" % LEG]})
+            if p == "/stall":   # headers, a few bytes, then nothing: like a server that hangs mid-answer
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "100000"); self.end_headers(); self.wfile.write(b"[")
+                self.wfile.flush(); time.sleep(6); return
             if p == "/health":
                 self.hit("health"); return self.send(200, {"status": "ok"})
             if p == "/get_search_videos.php":
@@ -101,6 +105,9 @@ class H(BaseHTTPRequestHandler):
                 self.hit("own-tubeme")
                 return self.send(200, {"tubeme": 1, "version": "0.1.0", "demo": True, "sound3gp": "aac",
                     "qualities": ["h263-144", "h264-144", "mp4v-240", "h264-240", "mp4v-360"]})
+            if p == "/popular":
+                self.hit("own-popular")
+                return self.send(200, [{"id": vid(7), "title": "Own popular", "author": "Mine", "seconds": 30, "views": 1}])
             if p == "/search":
                 self.hit("own-search")
                 return self.send(200, [{"id": vid(i), "title": "Own r\u00e9sultat %d" % i, "author": "Mine", "seconds": 65 + i, "views": 0 if i == 0 else 42}
@@ -156,7 +163,7 @@ def main():
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

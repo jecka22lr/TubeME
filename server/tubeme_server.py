@@ -17,6 +17,7 @@ if none is installed.
 What the phone app asks for:
     /tubeme                 what this server is and which qualities it makes
     /search?q=...           search results
+    /popular                popular videos right now
     /info?id=...            one video's details
     /comments?id=...        the top comments
     /thumb?id=...&w=320     thumbnail, scaled to the phone's screen
@@ -39,7 +40,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -99,6 +100,11 @@ def fit(sw, sh, bw, bh):
 SOURCE_FORMAT = ("18/b[height<=360][ext=mp4]/bv*[height<=360][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=360]+ba/"
                  "b[height<=480]/bv*[height<=480]+ba/b/bv*+ba")
 UPDATE_EVERY = 12 * 3600
+# YouTube retired its Trending page; these are its "hype" charts, the same ones notPipe uses
+HYPE_PLAYLISTS = ["OLXuPDPDe3URMWBdmS4_jxdqVF08DAlAXWQ", "OLd7LoUR1ndxIsyTJ_5pK4tvrWBcvkewBLg",
+                  "OLNUaVf-BhE20xpEEdOmnxF6oyKQwpN1tBQ", "OLUZ2nAWnPVwwoXomaTvbFi1Cje8td4Z0zg",
+                  "OLewrgOzMLeOADYzQ1ewNeqtPlJP20RE_Zg", "OLbXum44nJ19cZmR7GxDm5rF_Nj_coRoO5g",
+                  "OLPPB3977IfFUtPW8213fFOsf2lmAWfahDg", "OLZyZj8vWFMkIOGlFzyKuFlLA2PY42VhRuA"]
 DENO_MAX_AGE = 30 * 86400
 
 
@@ -271,6 +277,7 @@ class Server:
         self.slots = threading.Semaphore(workers)
         self.info_cache = {}
         self.comment_cache = {}
+        self.popular_cache = None
         encoders = run(["ffmpeg", "-hide_banner", "-encoders"]).stdout.decode("utf-8", "replace")
         self.has_amr = "libopencore_amrnb" in encoders
         self.qualities = []
@@ -287,11 +294,7 @@ class Server:
 
     # ---------- YouTube side ----------
 
-    def search(self, q):
-        if self.demo:
-            return [dict(id="demo%07d" % i, title="Demo clip %d (%s)" % (i, q), author="TubeME demo",
-                         seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
-        res = json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "ytsearch15:" + q], timeout=60))
+    def entries(self, res):
         out = []
         for e in res.get("entries") or []:
             if not e or not ID_RE.match(str(e.get("id", ""))):
@@ -299,6 +302,38 @@ class Server:
             out.append(dict(id=e["id"], title=e.get("title") or "", author=e.get("channel") or e.get("uploader") or "",
                             seconds=int(e.get("duration") or 0), views=int(e.get("view_count") or 0)))
         return out
+
+    def popular(self):
+        """Popular videos, kept for half an hour (the charts change slowly)."""
+        if self.popular_cache and time.time() - self.popular_cache[0] < 1800:
+            return self.popular_cache[1]
+        if self.demo:
+            out = [dict(id="demo%07d" % i, title="Popular demo clip %d" % i, author="TubeME demo",
+                        seconds=8 + i * 4, views=5000 * i) for i in range(1, 5)]
+        else:
+            import random
+            lists = HYPE_PLAYLISTS[:]
+            random.shuffle(lists)
+            out, last = [], None
+            for pl in lists[:3]:
+                try:
+                    res = json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "--playlist-end", "25",
+                                                       "https://www.youtube.com/playlist?list=" + pl], timeout=60))
+                    out = self.entries(res)
+                    if out:
+                        break
+                except Exception as e:
+                    last = e
+            if not out:
+                raise RuntimeError("couldn't load popular videos" + (": " + short(last) if last else ""))
+        self.popular_cache = (time.time(), out)
+        return out
+
+    def search(self, q):
+        if self.demo:
+            return [dict(id="demo%07d" % i, title="Demo clip %d (%s)" % (i, q), author="TubeME demo",
+                         seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
+        return self.entries(json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "ytsearch15:" + q], timeout=60)))
 
     def info(self, vid):
         if vid in self.info_cache:
@@ -588,12 +623,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/tubeme":
                 return self.send_json({"tubeme": 1, "version": VERSION, "demo": s.demo, "qualities": s.qualities,
-                                       "features": ["comments"],
+                                       "features": ["comments", "popular"],
                                        "sound3gp": "amr" if s.has_amr else "aac"})
             if p == "/search":
                 if not q.get("q", "").strip():
                     return self.fail(400, "q is required")
                 return self.send_json(s.search(q["q"].strip()))
+            if p == "/popular":
+                return self.send_json(s.popular())
             vid = q.get("id", "")
             if p in ("/info", "/thumb", "/prepare", "/comments") and not ID_RE.match(vid):
                 return self.fail(400, "id must be an 11 character video id")
