@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 and server 0.6.0
+
+- **Public servers**: the server can be hosted for other people. `--key` makes it friends-only
+  (addresses end in `/k/KEY`); `--public` adds limits per visitor: requests a minute, new videos an
+  hour, videos at once, longest video, connections. Each limit can be set on its own and `0`
+  turns it off, so the length cap is optional (`--public --max-minutes 0`). `--trust-proxy` for
+  running behind nginx or Caddy. See "Hosting it for other people" in `server/README.md`
+- The app uses more than one TubeME server: yours first, then public ones from the server list
+  (a new `tubeme` key in the list file), ranked by speed with the other public servers
+- A server's own reason for refusing ("too many requests; try again in 42 s", "this server needs
+  a key") reaches the screen instead of "HTTP 429"
+
 ## 0.3.0 and server 0.5.0
 
 - **More results**: search, Popular, related videos and channels end with "More results...", which

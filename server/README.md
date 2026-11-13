@@ -76,6 +76,65 @@ system-wide, so it also works on systems that don't allow `pip install` into the
     --workers 2            conversions running at once
     --demo                 test videos only, no YouTube
     --no-update            don't install or update yt-dlp, don't fetch Deno
+    --public               limits for a server open to anyone (see "Hosting it for other people")
+    --key KEY              friends only: addresses must end in /k/KEY
+    --max-minutes N        longest video converted; 0 = no limit
+    --trust-proxy          behind nginx/Caddy: count visitors by X-Forwarded-For
+
+## Hosting it for other people
+
+The same script can serve people outside your home, either friends or anyone.
+
+**Friends only:** start it with a key, for example `python3 tubeme_server.py --key 8xQ2mv7c`. Every
+address then has to end in `/k/8xQ2mv7c`, so the address you give your friends is
+`http://<your address>:8765/k/8xQ2mv7c`. They type that into Settings > My TubeME server. Anyone
+without the key gets nothing but "this server needs a key".
+
+**Anyone:** start it with `--public`. That switches on limits per visitor, so one person can't
+take the whole machine:
+
+| Option | `--public` default | What it limits |
+|---|---|---|
+| `--per-minute` | 90 | requests a minute (downloads don't count) |
+| `--conversions-per-hour` | 20 | new videos a visitor can have converted per hour; videos already converted are free |
+| `--at-once` | 2 | videos one visitor can have converting at the same time |
+| `--max-minutes` | 30 | the longest video that will be converted |
+| `--max-connections` | 64 | connections served at the same moment |
+
+Each can be changed, and `0` turns that one off: `--public --max-minutes 0` keeps the other limits
+but converts videos of any length, `--public --max-minutes 90` allows up to an hour and a half.
+They also work without `--public`, for example a home server with just `--max-minutes 60`. The
+server prints the limits it is using at startup and shows them on its front page.
+
+`--public` and `--key` can be combined.
+
+**Getting it onto the internet**
+
+- On a home connection: forward the port (8765 by default) on your router to the computer running
+  the server, and give people your public address. Many home connections change address now and
+  then; a free dynamic DNS name (DuckDNS, No-IP) keeps one name pointing at it.
+- On a rented server (VPS): open the port in its firewall and run it as a service (below).
+- Behind nginx or Caddy: add `--trust-proxy`, so the limits count each visitor and not the proxy.
+  Without it every visitor looks like the proxy and they all share one set of limits.
+- Old phones can't do modern HTTPS, so the phone side has to stay plain `http://`. A proxy can
+  offer HTTPS to other clients alongside, but TubeME on an old phone will use the http address.
+
+**Letting TubeME find it**
+
+TubeME reads a list of servers from the "Server list URL" in its Settings. A list is a JSON file;
+public TubeME servers go under a `tubeme` key, next to the existing ones:
+
+    {"tubeme": ["http://tube.example.org:8765"], "ytapilegacy": [...], "yt2009": [...], "invidious": [...]}
+
+Anyone can host such a file and point TubeME at it.
+
+**Before opening it to everyone**
+
+- YouTube blocks addresses that download a lot. A busy public server may find YouTube refusing it
+  after a while; rented servers in data centres are refused sooner than home connections.
+- Downloading from YouTube is against YouTube's terms of service, and you are the one serving the
+  files. Keep the cache small (`--max-cache-mb`) and think about who you open it to.
+- Each conversion costs CPU. A small VPS manages two at once comfortably (`--workers 2`).
 
 ## Running it all the time (Linux)
 
@@ -114,7 +173,8 @@ Symbian; very old phones may play AAC 3GP files silent.
 
 ## Things to know
 
-- There is no password. Run it on your home network; don't forward the port to the internet.
+- Without `--key` there is no password: anyone who can reach the port can use it. At home behind a
+  router that's only your own network; see "Hosting it for other people" before forwarding the port.
 - When a video fails, the server window shows yt-dlp's own messages just above the "failed" line.
 - `python test_server.py` checks the server in demo mode; add `--online` to also test a real first
   start (installs yt-dlp and fetches Deno into a temporary folder).

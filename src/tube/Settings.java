@@ -57,7 +57,7 @@ final class Settings {
             if (rs.getNumRecords() < 1) return;
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(rs.getRecord(1)));
             int ver = in.readInt();
-            if (ver < 1 || ver > 5) return;
+            if (ver < 1 || ver > 6) return;
             mode = in.readInt();
             quality = in.readInt();
             thumbs = in.readBoolean();
@@ -76,6 +76,7 @@ final class Settings {
             if (ver >= 3) api.own = in.readUTF();
             if (ver >= 4) allQualities = in.readBoolean();
             if (ver >= 5) listThumbs = in.readBoolean();
+            if (ver >= 6) api.tubeme = readList(in);
         } catch (Throwable t) {
             // first run or damaged record: defaults are fine
         } finally {
@@ -91,7 +92,7 @@ final class Settings {
         try {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             DataOutputStream o = new DataOutputStream(bo);
-            o.writeInt(5);
+            o.writeInt(6);
             o.writeInt(mode);
             o.writeInt(quality);
             o.writeBoolean(thumbs);
@@ -108,6 +109,7 @@ final class Settings {
             o.writeUTF(api.own);
             o.writeBoolean(allQualities);
             o.writeBoolean(listThumbs);
+            writeList(o, api.tubeme);
             byte[] d = bo.toByteArray();
             rs = RecordStore.openRecordStore(STORE, true);
             if (rs.getNumRecords() < 1) rs.addRecord(d, 0, d.length);

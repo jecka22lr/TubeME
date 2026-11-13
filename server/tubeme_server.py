@@ -13,6 +13,8 @@ if none is installed.
     python tubeme_server.py --no-update    # don't install or update anything
     python tubeme_server.py --port 9000 --cache D:\\tubeme-cache --max-cache-mb 4000
     python tubeme_server.py --demo         # no internet needed: test videos only
+    python tubeme_server.py --public       # for strangers on the internet: limits on (see --help)
+    python tubeme_server.py --key s3cret   # friends only: the address becomes http://host:8765/k/s3cret
 
 What the phone app asks for:
     /tubeme                 what this server is and which qualities it makes
@@ -41,7 +43,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -261,9 +263,69 @@ class Tools:
             raise RuntimeError(errors[-1] if errors else (err.strip().splitlines() or ["yt-dlp failed"])[-1])
 
 
+class Limits:
+    """What one visitor may do. All zero means no limits (a home server)."""
+
+    def __init__(self, per_minute=0, conversions_per_hour=0, at_once=0, max_seconds=0, connections=0, trust_proxy=False):
+        self.per_minute = per_minute
+        self.conversions_per_hour = conversions_per_hour
+        self.at_once = at_once
+        self.max_seconds = max_seconds
+        self.connections = connections
+        self.trust_proxy = trust_proxy
+        self.lock = threading.Lock()
+        self.hits = {}        # ip -> recent request times
+        self.starts = {}      # ip -> recent conversion start times
+        self.running = {}     # ip -> conversions in progress
+
+    def _recent(self, table, ip, window):
+        now = time.time()
+        t = [x for x in table.get(ip, []) if now - x < window]
+        table[ip] = t
+        return t
+
+    def request(self, ip):
+        """None if allowed, else seconds to wait."""
+        if not self.per_minute:
+            return None
+        with self.lock:
+            t = self._recent(self.hits, ip, 60)
+            if len(t) >= self.per_minute:
+                return int(60 - (time.time() - t[0])) + 1
+            t.append(time.time())
+            if len(self.hits) > 5000:  # forget visitors who left
+                for k in [k for k, v in self.hits.items() if not v]:
+                    del self.hits[k]
+        return None
+
+    def start(self, ip):
+        """None if this visitor may start another conversion, else the reason."""
+        with self.lock:
+            if self.at_once and self.running.get(ip, 0) >= self.at_once:
+                return "you already have %d videos being prepared here; wait for one to finish" % self.at_once
+            if self.conversions_per_hour:
+                t = self._recent(self.starts, ip, 3600)
+                if len(t) >= self.conversions_per_hour:
+                    return "limit of %d new videos an hour reached; try again in %d min" % (
+                        self.conversions_per_hour, int((3600 - (time.time() - t[0])) / 60) + 1)
+                t.append(time.time())
+            self.running[ip] = self.running.get(ip, 0) + 1
+        return None
+
+    def done(self, ip):
+        with self.lock:
+            n = self.running.get(ip, 0) - 1
+            if n > 0:
+                self.running[ip] = n
+            else:
+                self.running.pop(ip, None)
+
+
 class Server:
-    def __init__(self, cache, demo, max_cache_mb, workers, tools=None):
+    def __init__(self, cache, demo, max_cache_mb, workers, tools=None, limits=None, key=""):
         self.tools = tools
+        self.limits = limits or Limits()
+        self.key = key
         self.cache = os.path.abspath(cache)
         self.src_dir = os.path.join(self.cache, "src")
         self.out_dir = os.path.join(self.cache, "out")
@@ -471,27 +533,49 @@ class Server:
 
     # ---------- conversion ----------
 
-    def prepare(self, vid, key):
+    def prepare(self, vid, key, ip="", prefix=""):
         """Starts a conversion if needed and reports where it stands."""
         name = "%s-%s.%s" % (vid, key, PROFILES[key]["ext"])
         out = os.path.join(self.out_dir, name)
         with self.lock:
             job = self.jobs.get(name)
-            if job is None or (job["state"] == "error" and time.time() - job["at"] > 30):
-                if os.path.exists(out) and job is None:
-                    job = dict(state="ready", percent=100, at=time.time())
-                else:
-                    job = dict(state="queued", percent=0, at=time.time(), error="")
-                    threading.Thread(target=self.convert, args=(vid, key, out, job), daemon=True).start()
+            fresh = job is None or (job["state"] == "error" and time.time() - job["at"] > 30)
+            if fresh and os.path.exists(out) and job is None:
+                job = dict(state="ready", percent=100, at=time.time())
                 self.jobs[name] = job
+                fresh = False
+        if fresh:
+            # a ready file or a conversion already running costs nothing; a new one is checked first
+            if self.limits.max_seconds:
+                secs = int(self.info(vid).get("seconds") or 0)
+                if secs > self.limits.max_seconds:
+                    return dict(state="error", error="this server only prepares videos up to %d minutes"
+                                % (self.limits.max_seconds // 60))
+            why = self.limits.start(ip)
+            if why:
+                return dict(state="error", error=why)
+            with self.lock:
+                job = self.jobs.get(name)
+                if job is None or job["state"] == "error":
+                    job = dict(state="queued", percent=0, at=time.time(), error="")
+                    self.jobs[name] = job
+                    threading.Thread(target=self.convert, args=(vid, key, out, job, ip), daemon=True).start()
+                else:
+                    self.limits.done(ip)  # someone else started it meanwhile
         if job["state"] == "ready":
             os.utime(out, None)  # mark as recently used for the cache clean-up
-            return dict(state="ready", url="/file/" + name, bytes=os.path.getsize(out))
+            return dict(state="ready", url=prefix + "/file/" + name, bytes=os.path.getsize(out))
         if job["state"] == "error":
             return dict(state="error", error=job["error"])
         return dict(state=job["state"], percent=job["percent"])
 
-    def convert(self, vid, key, out, job):
+    def convert(self, vid, key, out, job, ip=""):
+        try:
+            self._convert(vid, key, out, job)
+        finally:
+            self.limits.done(ip)
+
+    def _convert(self, vid, key, out, job):
         p = PROFILES[key]
         tmp = out + ".part"
         try:
@@ -595,6 +679,17 @@ class Server:
 class Handler(BaseHTTPRequestHandler):
     server_version = "TubeME/" + VERSION
     protocol_version = "HTTP/1.0"
+    # a visitor that stops sending or reading mid-request is dropped after this long
+    timeout = 120
+
+    def client_ip(self):
+        s = self.server.app
+        ip = self.client_address[0]
+        if s.limits.trust_proxy:
+            fwd = self.headers.get("X-Forwarded-For", "")
+            if fwd:
+                ip = fwd.split(",")[0].strip() or ip
+        return ip
 
     def log_message(self, *a):
         pass
@@ -654,15 +749,49 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
+        gate = self.server.gate
+        if gate is not None and not gate.acquire(False):
+            try:
+                self.fail(503, "server busy, try again in a moment")
+            except Exception:
+                pass
+            return
+        try:
+            self.route()
+        finally:
+            if gate is not None:
+                gate.release()
+
+    def route(self):
         s = self.server.app
         u = urllib.parse.urlparse(self.path)
         q = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         p = u.path
+        prefix = ""
+        if s.key:
+            # friends-only: every address starts with /k/<key>/
+            want = "/k/%s" % s.key
+            if p == want or p.startswith(want + "/"):
+                prefix = want
+                p = p[len(want):] or "/"
+            elif p != "/tubeme":
+                return self.fail(403, "this server needs a key: use the address with /k/<key> at the end")
+            else:
+                return self.send_json({"tubeme": 1, "version": VERSION, "locked": True, "qualities": []})
+        ip = self.client_ip()
+        if not p.startswith("/file/"):  # downloads and resumes don't count against the request limit
+            wait = s.limits.request(ip)
+            if wait:
+                log("rate limit:", ip)
+                return self.fail(429, "too many requests; try again in %d s" % wait)
         try:
             if p == "/tubeme":
+                lim = s.limits
                 return self.send_json({"tubeme": 1, "version": VERSION, "demo": s.demo, "qualities": s.qualities,
                                        "features": ["comments", "popular", "channel", "pages"],
-                                       "sound3gp": "amr" if s.has_amr else "aac"})
+                                       "sound3gp": "amr" if s.has_amr else "aac",
+                                       "limits": {"per_minute": lim.per_minute, "conversions_per_hour": lim.conversions_per_hour,
+                                                  "at_once": lim.at_once, "max_minutes": lim.max_seconds // 60}})
             try:
                 page = max(1, min(20, int(q.get("page", "1"))))
             except ValueError:
@@ -695,7 +824,7 @@ class Handler(BaseHTTPRequestHandler):
                 key = q.get("q", "")
                 if key not in s.qualities:
                     return self.fail(404, "this server doesn't make quality '%s'" % key)
-                return self.send_json(s.prepare(vid, key))
+                return self.send_json(s.prepare(vid, key, ip, prefix))
             if p.startswith("/file/"):
                 name = p[6:]
                 path = os.path.join(s.out_dir, name)
@@ -703,9 +832,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.fail(404, "no such file (it may have been cleared from the cache; press Play again)")
                 return self.send_file(path, "video/3gpp" if name.endswith(".3gp") else "video/mp4")
             if p == "/":
-                body = ("<html><body><h1>TubeME server %s</h1><p>Running%s. Qualities: %s.</p>"
+                lim = s.limits
+                rules = ""
+                if lim.per_minute or lim.conversions_per_hour or lim.max_seconds:
+                    rules = "<p>Limits per visitor: %s.</p>" % ", ".join(x for x in (
+                        "%d requests a minute" % lim.per_minute if lim.per_minute else "",
+                        "%d new videos an hour" % lim.conversions_per_hour if lim.conversions_per_hour else "",
+                        "%d at once" % lim.at_once if lim.at_once else "",
+                        "videos up to %d minutes" % (lim.max_seconds // 60) if lim.max_seconds else "") if x)
+                body = ("<html><body><h1>TubeME server %s</h1><p>Running%s. Qualities: %s.</p>%s"
                         "<p>In TubeME: Settings &gt; My TubeME server &gt; this page's address.</p></body></html>"
-                        % (VERSION, " in demo mode" if s.demo else "", ", ".join(s.qualities))).encode("utf-8")
+                        % (VERSION, " in demo mode" if s.demo else "", ", ".join(s.qualities), rules)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -753,7 +890,27 @@ def main():
     ap.add_argument("--demo", action="store_true", help="no YouTube: generated test videos only")
     ap.add_argument("--no-update", action="store_true",
                     help="don't install or update yt-dlp, and don't fetch Deno")
+    g = ap.add_argument_group("hosting it for other people")
+    g.add_argument("--public", action="store_true",
+                   help="sensible limits for a server open to the internet (each can be changed with the options below)")
+    g.add_argument("--key", default="", help="friends only: every address must start with /k/KEY")
+    g.add_argument("--per-minute", type=int, default=None, help="requests a minute per visitor; 0 = no limit (public: 90)")
+    g.add_argument("--conversions-per-hour", type=int, default=None,
+                   help="new videos a visitor may have prepared per hour; 0 = no limit (public: 20)")
+    g.add_argument("--at-once", type=int, default=None, help="videos one visitor may have preparing at once; 0 = no limit (public: 2)")
+    g.add_argument("--max-minutes", type=int, default=None,
+                   help="longest video that will be prepared, in minutes; 0 = no limit (default: no limit, or 30 with --public)")
+    g.add_argument("--max-connections", type=int, default=None, help="connections served at once; 0 = no limit (public: 64)")
+    g.add_argument("--trust-proxy", action="store_true",
+                   help="behind nginx/Caddy etc.: take the visitor's address from X-Forwarded-For")
     a = ap.parse_args()
+    if a.key and not re.match(r"^[A-Za-z0-9_-]{4,64}$", a.key):
+        sys.exit("--key must be 4 to 64 letters, digits, - or _")
+
+    def pick(v, public_default):
+        return v if v is not None else (public_default if a.public else 0)
+    limits = Limits(pick(a.per_minute, 90), pick(a.conversions_per_hour, 20), pick(a.at_once, 2),
+                    pick(a.max_minutes, 30) * 60, pick(a.max_connections, 64), a.trust_proxy)
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
             how = ("winget install Gyan.FFmpeg" if os.name == "nt" else "brew install ffmpeg" if sys.platform == "darwin"
@@ -778,14 +935,23 @@ def main():
             threading.Thread(target=keep_current, daemon=True).start()
     ff = run(["ffmpeg", "-version"]).stdout.decode("utf-8", "replace").splitlines()
     log(ff[0] if ff else "ffmpeg version unknown")
-    app = Server(a.cache, a.demo, a.max_cache_mb, a.workers, tools)
+    app = Server(a.cache, a.demo, a.max_cache_mb, a.workers, tools, limits, a.key)
     httpd = ThreadingHTTPServer((a.host, a.port), Handler)
     httpd.daemon_threads = True
     httpd.app = app
+    httpd.gate = threading.BoundedSemaphore(limits.connections) if limits.connections else None
     log("TubeME server %s%s, qualities: %s" % (VERSION, " (demo mode)" if a.demo else "", ", ".join(app.qualities)))
     log("cache:", app.cache, "(up to %d MB)" % a.max_cache_mb)
+    if limits.per_minute or limits.conversions_per_hour or limits.max_seconds or limits.connections:
+        log("limits per visitor: %s requests/min, %s new videos/hour, %s at once, videos up to %s min, %s connections%s" % (
+            limits.per_minute or "no limit", limits.conversions_per_hour or "no limit", limits.at_once or "no limit",
+            limits.max_seconds // 60 or "any length", limits.connections or "unlimited",
+            ", visitor address from X-Forwarded-For" if limits.trust_proxy else ""))
+    suffix = "/k/" + a.key if a.key else ""
     for addr in lan_addresses(a.port):
-        log("in TubeME, set My TubeME server to", addr)
+        log("in TubeME, set My TubeME server to", addr + suffix)
+    if a.public:
+        log("public mode: give people http://<this machine's public address or domain>:%d%s" % (a.port, suffix))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

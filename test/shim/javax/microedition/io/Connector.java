@@ -19,7 +19,7 @@ public class Connector {
         case "getLength": return h.getContentLengthLong();
         case "getType": return h.getContentType();
         case "getURL": return u;
-        case "openInputStream": return h.getInputStream();
+        case "openInputStream": return h.getResponseCode() >= 400 ? h.getErrorStream() : h.getInputStream(); // phones hand out error bodies too
         case "close": h.disconnect(); return null;
         default: return null; } });
   }

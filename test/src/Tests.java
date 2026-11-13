@@ -443,6 +443,29 @@ public class Tests {
         eq(((Video) fo.search("x").elementAt(0)).channel, "UCminemineminemineminem0", "search results carry the channel");
         eq(((Video) fl.search("gatos").elementAt(0)).channel, "UCcanalcanalcanalcanal00", "legacy results carry the channel");
 
+        // --- public TubeME servers from the list, keys in the address, the server's own error text ---
+        String PUB = "http://127.0.0.1:18089/k/abcd";
+        Api pb = new Api();
+        eq(Integer.valueOf(pb.updateInstances(L + "/list2.json")), Integer.valueOf(2), "list with a TubeME server");
+        eq(pb.tubeme.elementAt(0), PUB, "its address keeps the key path");
+        ok(pb.ping(PUB), "public TubeME server pings (reads what it makes)");
+        boolean listed = false;
+        for (int i = 0; i < pb.servers().size(); i++) listed |= ((String[]) pb.servers().elementAt(i))[0].equals("TubeME");
+        ok(listed, "shown on the Servers screen");
+        pb.legacy = new Vector(); pb.legacy.addElement(GONE);
+        eq(((Video) pb.search("x").elementAt(0)).title, "Public result", "search through the public server");
+        Video pv = new Video(); pv.id = "abcDEF_-001";
+        Api.Stream ps2 = pb.stream(pv, Api.Q_MP4V_240, 0);
+        eq(ps2.url, PUB + "/file/abcDEF_-001-mp4v-240.mp4", "file address keeps the key");
+        eq(Integer.valueOf(Net.get(ps2.url, 200000).length), Integer.valueOf(76800), "and downloads");
+        eq(Integer.valueOf(pb.serversFor(Api.Q_H264_240)), Integer.valueOf(0), "qualities it doesn't make aren't counted");
+        threw = false; try { pb.search("busy"); } catch (Exception e) { threw = e.getMessage().indexOf("try again in 42 s") >= 0; }
+        ok(threw, "a refusal shows the server's own reason");
+        Api locked = new Api(); locked.legacy = new Vector(); locked.own = "http://127.0.0.1:18089";
+        ok(!locked.ping("http://127.0.0.1:18089"), "a locked server without its key counts as down");
+        threw = false; try { Net.getText("http://127.0.0.1:18089/search?q=x"); } catch (java.io.IOException e) { threw = e.getMessage().equals("HTTP 403: this server needs a key"); }
+        ok(threw, "403 carries the reason");
+
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
         rk.yt2009.addElement(Y); rk.yt2009.addElement(YBAD); rk.invidious.addElement(INV);

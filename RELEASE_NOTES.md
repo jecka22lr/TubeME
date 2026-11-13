@@ -1,8 +1,8 @@
 TubeME, a YouTube client for J2ME phones (MIDP 2.0 / CLDC 1.1), plus a small server you can run on your own computer.
 
 **Downloads**
-- `TubeME-0.3.0.zip`: the app (jar + jad). Also attached separately as `TubeME.jar` / `TubeME.jad`
-- `TubeME-server-0.5.0.zip`: the optional server for Windows, macOS or Linux (Python script + setup guide)
+- `TubeME-0.4.0.zip`: the app (jar + jad). Also attached separately as `TubeME.jar` / `TubeME.jad`
+- `TubeME-server-0.6.0.zip`: the optional server for Windows, macOS or Linux (Python script + setup guide)
 
 **The app**
 - Search, Popular, open by ID or link, related videos, channels and comments, each with a next page
@@ -16,6 +16,7 @@ TubeME, a YouTube client for J2ME phones (MIDP 2.0 / CLDC 1.1), plus a small ser
 - Fetches, converts and serves video sized for phones, including 240p and 144p, plus search, popular, channels, comments and thumbnails
 - Needs Python and ffmpeg; installs and updates yt-dlp and Deno by itself
 - Set its address in Settings > My TubeME server; the public servers stay as backup
+- Can be hosted for friends (`--key`) or for anyone (`--public`, with adjustable limits per visitor and an optional video length cap)
 
 **Tested**
 - On a Nokia C6-00 (S60 5th Edition): search, thumbnails, downloading, RealPlayer mode, the quality picker, the server converting real videos on Windows

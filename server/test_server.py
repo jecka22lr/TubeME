@@ -188,8 +188,91 @@ def online_phase():
         shutil.rmtree(work, ignore_errors=True)
         BASE = old
 
+def public_phase():
+    """--public with a key: limits per visitor, the key prefix, the length cap."""
+    global BASE
+    cache = tempfile.mkdtemp(prefix="tubeme-public-")
+    old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 3)
+    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--key", "fr1ends",
+                            "--per-minute", "25", "--conversions-per-hour", "2", "--at-once", "1", "--max-minutes", "5",
+                            "--port", str(PORT + 3), "--cache", cache], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(100):
+            try:
+                get("/tubeme"); break
+            except Exception:
+                time.sleep(0.2)
+        code, info = js("/tubeme")
+        ok(code == 200 and info.get("locked") is True and info["qualities"] == [], "without the key it only says it is locked")
+        code, err = js("/search?q=x")
+        ok(code == 403 and "key" in err["error"], "no key, no search")
+        ok(js("/k/wrong/search?q=x")[0] == 403, "wrong key refused")
+        K = "/k/fr1ends"
+        code, info = js(K + "/tubeme")
+        ok(code == 200 and info["limits"]["conversions_per_hour"] == 2 and info["limits"]["max_minutes"] == 5, "limits announced")
+        ok(js(K + "/search?q=x")[0] == 200, "search with the key")
+        code, st = js(K + "/prepare?id=demo0000099&q=h263-144")
+        ok(st["state"] == "error" and "up to 5 minutes" in st["error"], "too long a video refused: %s" % st)
+        code, st1 = js(K + "/prepare?id=demo0000001&q=h263-144")
+        code, st2 = js(K + "/prepare?id=demo0000002&q=h263-144")
+        ok(st1["state"] != "error" and st2["state"] == "error" and "already have 1" in st2["error"], "one at a time per visitor: %s" % st2)
+        t0 = time.time()
+        while time.time() - t0 < 30:
+            st1 = js(K + "/prepare?id=demo0000001&q=h263-144")[1]
+            if st1["state"] in ("ready", "error"): break
+            time.sleep(0.3)
+        ok(st1["state"] == "ready" and st1["url"].startswith(K + "/file/"), "ready file address keeps the key: %s" % st1.get("url"))
+        ok(get(st1["url"])[0] == 200 and get("/file/" + st1["url"].split("/file/")[1])[0] == 403, "files need the key too")
+        st2 = js(K + "/prepare?id=demo0000002&q=h263-144")[1]
+        ok(st2["state"] != "error", "second video allowed once the first is done")
+        t0 = time.time()
+        while time.time() - t0 < 30 and js(K + "/prepare?id=demo0000002&q=h263-144")[1]["state"] not in ("ready", "error"):
+            time.sleep(0.3)
+        st3 = js(K + "/prepare?id=demo0000003&q=h263-144")[1]
+        ok(st3["state"] == "error" and "2 new videos an hour" in st3["error"], "hourly limit: %s" % st3)
+        ok(js(K + "/prepare?id=demo0000001&q=h263-144")[1]["state"] == "ready", "a ready video still costs nothing")
+        spoof = {"X-Forwarded-For": "203.0.113.%d"}
+        codes = [get(K + "/search?q=x", {"X-Forwarded-For": "203.0.113.%d" % i})[0] for i in range(25)]
+        ok(429 in codes, "request limit kicks in, and X-Forwarded-For is ignored without --trust-proxy")
+        code, h, body = get(K + "/search?q=x")
+        ok(code == 429 and b"try again in" in body, "429 says when to try again")
+        ok(get(st1["url"])[0] == 200, "downloads aren't blocked by the request limit")
+    finally:
+        srv.terminate()
+        try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
+        except Exception: out = ""
+        if "--show-log" in sys.argv: print(out)
+        shutil.rmtree(cache, ignore_errors=True)
+        BASE = old
+
+def cap_off_phase():
+    """--public --max-minutes 0: public limits, but any video length."""
+    global BASE
+    cache = tempfile.mkdtemp(prefix="tubeme-cap-")
+    old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 4)
+    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--max-minutes", "0",
+                            "--port", str(PORT + 4), "--cache", cache], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(100):
+            try:
+                get("/tubeme"); break
+            except Exception:
+                time.sleep(0.2)
+        code, info = js("/tubeme")
+        ok(info["limits"]["max_minutes"] == 0 and info["limits"]["per_minute"] == 90, "public limits with the length cap off")
+        st = js("/prepare?id=demo0000099&q=h263-144")[1]
+        ok(st["state"] != "error", "a long video is accepted with --max-minutes 0: %s" % st)
+    finally:
+        srv.terminate()
+        try: srv.communicate(timeout=5)
+        except Exception: pass
+        shutil.rmtree(cache, ignore_errors=True)
+        BASE = old
+
 def main():
     if "--online" in sys.argv: online_phase()
+    public_phase()
+    cap_off_phase()
     stub_phase()
     cache = tempfile.mkdtemp(prefix="tubeme-test-")
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--port", str(PORT), "--cache", cache],

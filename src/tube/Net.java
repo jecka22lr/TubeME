@@ -79,11 +79,14 @@ final class Net {
             int code = c.getResponseCode();
             if (code >= 200 && code < 300) break;
             String loc = (code >= 300 && code < 400) ? c.getHeaderField("Location") : null;
-            close(c);
             if (loc == null) {
-                Log.add("http " + code + " " + url);
-                throw new IOException("HTTP " + code);
+                // a TubeME server explains refusals ({"error": "..."}): pass that on to the user
+                String why = errorText(c);
+                close(c);
+                Log.add("http " + code + " " + url + (why != null ? " " + why : ""));
+                throw new IOException("HTTP " + code + (why != null ? ": " + why : ""));
             }
+            close(c);
             url = Util.resolve(url, loc);
         }
         InputStream in = null;
@@ -102,6 +105,28 @@ final class Net {
                 try { in.close(); } catch (IOException e) {}
             }
             close(c);
+        }
+    }
+
+    /** The "error" field of a small JSON error body, or null. Never throws. */
+    private static String errorText(HttpConnection c) {
+        InputStream in = null;
+        try {
+            String type = c.getType();
+            if (type == null || type.indexOf("json") < 0) return null;
+            in = c.openInputStream();
+            byte[] b = new byte[1024];
+            int got = 0, n;
+            while (got < b.length && (n = in.read(b, got, b.length - got)) > 0) got += n;
+            String e = Json.str(Json.parse(Util.utf8(b, got)), "error");
+            return e.length() > 0 ? e : null;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            try {
+                if (in != null) in.close();
+            } catch (Throwable t) {
+            }
         }
     }
 

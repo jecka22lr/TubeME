@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.3.0";
+    static final String VERSION = "0.4.0";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -77,15 +77,16 @@ final class Api {
     private boolean offers(String kind, String base, int quality, boolean mayAsk) {
         if (kind.equals("T")) {
             // a TubeME server says exactly what it makes
-            if (!ownKnown) {
+            Hashtable q = (Hashtable) makes.get(base);
+            if (q == null) {
                 if (!mayAsk) return true;
                 try {
-                    loadOwn();
+                    q = loadTube(base);
                 } catch (Exception e) {
                     return true;
                 }
             }
-            return ownQ.containsKey(Q_KEYS[quality]);
+            return q.containsKey(Q_KEYS[quality]);
         }
         // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
         if (kind.equals("L")) return quality == Q_H263 || quality == Q_MP4V || quality == Q_MP4V_360 || quality == Q_H264;
@@ -93,30 +94,46 @@ final class Api {
         return !missing.containsKey(base + "#" + quality);
     }
 
-    /** The user's own TubeME server (server/tubeme_server.py), always tried first. "" when unset. */
+    /**
+     * The user's own TubeME server (server/tubeme_server.py), always tried
+     * first. "" when unset. A friends-only server's address ends in /k/KEY.
+     */
     String own = "";
-    private final Hashtable ownQ = new Hashtable();
-    private boolean ownKnown;
+    /** Public TubeME servers from the shared list ("tubeme" key). */
+    Vector tubeme = new Vector();
+    /** TubeME server base -> Hashtable of the quality keys it makes. */
+    private final Hashtable makes = new Hashtable();
 
     /** Call after the own-server address changes. */
     void forgetOwn() {
-        ownKnown = false;
-        ownQ.clear();
+        makes.clear();
         order = null;
     }
 
-    /** Asks the own server what it is and which qualities it makes. */
-    private void loadOwn() throws Exception {
-        String base = Util.cleanBase(own);
+    /** Asks a TubeME server what it is and which qualities it makes. */
+    private Hashtable loadTube(String base) throws Exception {
         Object o = Json.parse(Net.getText(base + "/tubeme"));
         if (Json.str(o, "tubeme").length() == 0) throw new Exception("not a TubeME server");
-        Vector q = Json.arr(o, "qualities");
-        ownQ.clear();
-        for (int i = 0; i < q.size(); i++) {
-            if (q.elementAt(i) instanceof String) ownQ.put(q.elementAt(i), "");
+        if (Json.str(o, "locked").equals("true")) {
+            throw new Exception("this server needs a key: its address must end in /k/ and the key");
         }
-        ownKnown = true;
-        Log.add("own server makes " + q.size() + " qualities, 3gp sound " + Json.str(o, "sound3gp"));
+        Vector q = Json.arr(o, "qualities");
+        Hashtable h = new Hashtable();
+        for (int i = 0; i < q.size(); i++) {
+            if (q.elementAt(i) instanceof String) h.put(q.elementAt(i), "");
+        }
+        makes.put(base, h);
+        Log.add("TubeME server " + host(base) + " makes " + q.size() + " qualities");
+        return h;
+    }
+
+    private boolean isMine(String base) {
+        return base != null && base.length() > 0 && base.equals(Util.cleanBase(own));
+    }
+
+    /** "your server" for the own one, its host name for a public one. */
+    private String who(String base) {
+        return isMine(base) ? "your server" : host(base);
     }
 
     /**
@@ -133,7 +150,8 @@ final class Api {
             } catch (java.io.IOException io) {
                 String m = io.getMessage();
                 if (m != null && m.startsWith("HTTP 404")) {
-                    ownQ.remove(Q_KEYS[quality]);
+                    Hashtable h = (Hashtable) makes.get(base);
+                    if (h != null) h.remove(Q_KEYS[quality]);
                     throw new Exception("doesn't offer this quality");
                 }
                 throw io;
@@ -142,14 +160,14 @@ final class Api {
             if (st.equals("ready")) return Util.resolve(base, Json.str(o, "url"));
             if (st.equals("error")) throw new Exception(Json.str(o, "error"));
             if (st.length() == 0) throw new Exception(errorOf(o));
-            String line = st.equals("fetching") ? "Your server is fetching the video"
-                    : st.equals("queued") ? "Waiting for your server"
+            String line = st.equals("fetching") ? (isMine(base) ? "Your server" : host(base)) + " is fetching the video"
+                    : st.equals("queued") ? "Waiting for " + who(base)
                     : "Converting " + Json.str(o, "percent") + "%";
             if (!line.equals(said)) {
                 said = line;
                 say(line);
             }
-            if (System.currentTimeMillis() > end) throw new Exception("your server is still converting; try again later");
+            if (System.currentTimeMillis() > end) throw new Exception(who(base) + " is still converting; try again later");
             try {
                 Thread.sleep(POLL_EVERY);
             } catch (InterruptedException ie) {
@@ -169,6 +187,7 @@ final class Api {
     int serversFor(int quality) {
         Vector v = new Vector();
         add(v, "T", Util.cleanBase(own));
+        for (int i = 0; i < tubeme.size(); i++) add(v, "T", (String) tubeme.elementAt(i));
         add(v, "L", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
@@ -298,7 +317,8 @@ final class Api {
     /** Every known server as { kind, base }. */
     Vector servers() {
         Vector v = new Vector();
-        add(v, "TubeME server", Util.cleanBase(own));
+        add(v, "your TubeME server", Util.cleanBase(own));
+        for (int i = 0; i < tubeme.size(); i++) add(v, "TubeME", (String) tubeme.elementAt(i));
         add(v, "YtAPILegacy", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "YtAPILegacy", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "yt2009", (String) yt2009.elementAt(i));
@@ -310,13 +330,13 @@ final class Api {
     boolean ping(String base) {
         long t = System.currentTimeMillis();
         try {
-            if (base.equals(Util.cleanBase(own))) {
+            if (isMine(base) || tubeme.contains(base)) {
                 // one request does both: proves it is up and reads what it makes
-                loadOwn();
+                loadTube(base);
                 long took = System.currentTimeMillis() - t;
                 ms.put(base, String.valueOf(took));
                 markGood(base);
-                Log.add("ping ok " + took + "ms own " + base);
+                Log.add("ping ok " + took + "ms TubeME " + base);
                 return true;
             }
             int code = Net.code(base + "/health", PING_TIMEOUT);
@@ -345,6 +365,7 @@ final class Api {
         int up = 0, tested = 0, invUp = 0;
         Vector v = new Vector();
         add(v, "T", Util.cleanBase(own));
+        for (int i = 0; i < tubeme.size(); i++) add(v, "T", (String) tubeme.elementAt(i));
         add(v, "L", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
@@ -432,15 +453,17 @@ final class Api {
         Vector l = clean(Json.arr(o, "ytapilegacy"));
         Vector y = clean(Json.arr(o, "yt2009"));
         Vector i = clean(Json.arr(o, "invidious"));
-        if (l.size() + y.size() + i.size() == 0) throw new Exception("Instance list is empty");
+        Vector t = clean(Json.arr(o, "tubeme"));
+        if (l.size() + y.size() + i.size() + t.size() == 0) throw new Exception("Instance list is empty");
         if (l.size() == 0) l.addElement(DEFAULT_LEGACY);
         legacy = l;
+        tubeme = t;
         yt2009 = y;
         invidious = i;
         order = null;
         // servers get updated too: ask again what they offer
         missing.clear();
-        return l.size() + y.size() + i.size();
+        return l.size() + y.size() + i.size() + t.size();
     }
 
     private static Vector clean(Vector in) {
@@ -484,9 +507,10 @@ final class Api {
         String mine = Util.cleanBase(own);
         if (!metaTrouble(mine)) add(v, "T", mine);
         add(v, "L", Util.cleanBase(custom));
-        // YtAPILegacy before Invidious (it can also convert), each group fastest first
+        // TubeME and YtAPILegacy before Invidious (they can also convert), each group fastest first
         Vector l = new Vector();
         add(l, "L", lastGood);
+        addShuffled(l, tubeme, "T");
         addShuffled(l, legacy, "L");
         l = ranked(l, 0);
         Vector i = new Vector();
@@ -533,7 +557,7 @@ final class Api {
             String[] e = (String[]) order.elementAt(k);
             String path = e[0].equals("L") ? legacyPath : e[0].equals("T") ? ownPath : invPath;
             if (path == null) continue;
-            say(e[0].equals("T") ? "Asking your server" : "Asking " + host(e[1]));
+            say("Asking " + who(e[1]));
             try {
                 Object o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 if (!(o instanceof Vector)) throw new Exception(errorOf(o));
@@ -554,7 +578,7 @@ final class Api {
                 // "I don't have that page" (an older server without /popular) says nothing about its search
                 say(host(e[1]) + (notHere ? ": doesn't have this list" : ": " + msg(ex)));
                 if (!notHere) failed(e[1], ex);
-                last = ex;
+                last = better(last, ex);
                 if (e[1].equals(lastGood)) lastGood = null;
             }
         }
@@ -579,14 +603,14 @@ final class Api {
                         : mine ? "/info?id=" + id
                         : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,authorId,lengthSeconds,viewCount,"
                         + "description,publishedText,formatStreams";
-                say(mine ? "Asking your server" : "Asking " + host(e[1]));
+                say("Asking " + who(e[1]));
                 o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
                 Log.err("info " + e[1], ex);
                 say(host(e[1]) + ": " + msg(ex));
                 failed(e[1], ex);
-                last = ex;
+                last = better(last, ex);
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;
             }
@@ -632,7 +656,7 @@ final class Api {
                 String path = leg ? "/get-ytvideo-info.php?video_id=" + id
                         : mine ? "/comments?id=" + id
                         : "/api/v1/comments/" + id + "?fields=comments";
-                say(mine ? "Asking your server" : "Asking " + host(e[1]));
+                say("Asking " + who(e[1]));
                 Object o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
                 Vector in = o instanceof Vector ? (Vector) o : Json.arr(o, "comments");
                 if (!(o instanceof Vector) && !(o instanceof Hashtable)) throw new Exception("Bad answer");
@@ -655,7 +679,7 @@ final class Api {
                 Log.err("comments " + e[1], ex);
                 // a server without comments is not a broken server: don't demote it for search
                 if (ex instanceof java.io.IOException) failed(e[1], ex);
-                last = ex;
+                last = better(last, ex);
             }
         }
         throw new Exception("No server had the comments" + (last == null ? "" : ": " + msg(last)));
@@ -805,7 +829,7 @@ final class Api {
             String path = feedPath(f, e[0], 1, null);
             if (path == null) continue;
             anyTried = true;
-            say(e[0].equals("T") ? "Asking your server" : "Asking " + host(e[1]));
+            say("Asking " + who(e[1]));
             try {
                 Object o = Json.parse(Net.getText(e[1] + path, f.what == Feed.RELATED && e[0].equals("L") ? 60000 : metaTimeout(e[0])));
                 f.items.removeAllElements();
@@ -831,7 +855,7 @@ final class Api {
                 boolean notHere = m != null && m.startsWith("HTTP 404");
                 say(host(e[1]) + (notHere ? ": doesn't have this list" : ": " + msg(ex)));
                 if (!notHere && ex instanceof java.io.IOException) failed(e[1], ex);
-                last = ex;
+                last = better(last, ex);
             }
         }
         if (f.kind != null) return; // an empty but valid answer was the best there was
@@ -848,7 +872,7 @@ final class Api {
             f.end = true;
             return 0;
         }
-        say(f.kind.equals("T") ? "Asking your server" : "Asking " + host(f.base));
+        say("Asking " + who(f.base));
         Object o = Json.parse(Net.getText(f.base + path, f.what == Feed.RELATED && f.kind.equals("L") ? 60000 : metaTimeout(f.kind)));
         int n = takePage(f, f.kind, f.base, o);
         f.page = page;
@@ -869,6 +893,21 @@ final class Api {
         v.thumb = base + "/thumb?id=" + v.id;
         v.channel = channelRef(Json.str(o, "channel_id"));
         return v;
+    }
+
+    /**
+     * Of two failures, the one worth showing: a reason a server gave in words
+     * ("too many requests; try again in 42 s") beats "connection refused"
+     * from whichever server happened to be tried last.
+     */
+    static Exception better(Exception had, Exception now) {
+        if (had == null) return now;
+        return said(now) || !said(had) ? now : had;
+    }
+
+    private static boolean said(Exception e) {
+        String m = e.getMessage();
+        return m != null && m.startsWith("HTTP ") && m.indexOf(": ") > 0;
     }
 
     private static String errorOf(Object o) {
@@ -949,6 +988,7 @@ final class Api {
         add(out, "L", v.source);
         int pinned = out.size();
         Vector mix = new Vector();
+        addShuffled(mix, tubeme, "T");
         addShuffled(mix, legacy, "L");
         addShuffled(mix, yt2009, "Y");
         Vector sh = Util.shuffled(mix);

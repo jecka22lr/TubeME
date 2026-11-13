@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs
 
 HITS = set()
 VIDEO = bytes(range(256)) * 300  # 76800 bytes of "video"
-LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN = 18081, 18082, 18083, 18084, 18085, 18086, 18087, 18088
+LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB = 18081, 18082, 18083, 18084, 18085, 18086, 18087, 18088, 18089
 PREP = {}
 
 def png(w, h):
@@ -49,6 +49,9 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", "100000"); self.end_headers(); self.wfile.write(b"[")
                 self.wfile.flush(); time.sleep(6); return
+            if p == "/list2.json":   # a list that also names a public TubeME server
+                return self.send(200, {"ytapilegacy": ["http://127.0.0.1:%d" % LEG], "yt2009": [], "invidious": [],
+                                       "tubeme": ["http://127.0.0.1:%d/k/abcd/" % PUB]})
             if p == "/health":
                 self.hit("health"); return self.send(200, {"status": "ok"})
             if p == "/get_search_videos.php":
@@ -115,6 +118,24 @@ class H(BaseHTTPRequestHandler):
             if p == "/mp4_144":
                 return self.send(302, b"", headers={"Location": "/auth.html?redir=rtsp"})
             return self.send(404, b"Cannot GET", "text/html")
+        if port == PUB:      # a public, friends-only TubeME server: everything under /k/abcd
+            if p == "/tubeme" or not p.startswith("/k/abcd/"):
+                if p == "/tubeme": return self.send(200, {"tubeme": 1, "locked": True, "qualities": []})
+                return self.send(403, {"error": "this server needs a key"})
+            p = p[len("/k/abcd"):]
+            if p == "/tubeme":
+                self.hit("pub-tubeme")
+                return self.send(200, {"tubeme": 1, "version": "0.6.0", "qualities": ["mp4v-240", "h263-144"]})
+            if p == "/search":
+                if q["q"][0] == "busy":
+                    return self.send(429, {"error": "too many requests; try again in 42 s"})
+                return self.send(200, [{"id": vid(3), "title": "Public result", "author": "P"}])
+            if p == "/prepare":
+                self.hit("pub-prepare")
+                return self.send(200, {"state": "ready", "url": "/k/abcd/file/%s-%s.mp4" % (q["id"][0], q["q"][0]), "bytes": len(VIDEO)})
+            if p.startswith("/file/"):
+                return self.send(200, VIDEO, "video/mp4")
+            return self.send(404, {"error": "not found"})
         if port == OWN:      # speaks the TubeME server protocol (server/tubeme_server.py)
             if p == "/tubeme":
                 self.hit("own-tubeme")
@@ -200,12 +221,12 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     secs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN):
+    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB):
         s = HTTPServer(("127.0.0.1", port), H)
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["pub-tubeme", "pub-prepare", "own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]
