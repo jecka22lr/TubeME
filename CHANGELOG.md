@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- **TubeME server** (`server/tubeme_server.py`): a small Python server for your own PC that fetches,
+  converts and serves videos for the phone, with search, details and thumbnails. See `server/README.md`
+- New qualities, made by that server: MPEG-4 240p and H.264 240p (inside 320x240)
+- Settings > "My TubeME server": when set it is asked first for everything; the public servers
+  remain as backup. The app reads which qualities it makes and shows conversion progress in percent
+
 ## 0.1.13
 
 - Waits scale with the video's length: a yt2009 server gets 90 s plus 1 s per 6 s of video, a

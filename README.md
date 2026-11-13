@@ -14,8 +14,16 @@ Invidious, picked at random from a shared list and swapped out when one fails.
 | In-app player | MMAPI (JSR-135) inside the app | no file access, video supported |
 | Phone's player/browser | `platformRequest` with the stream URL | nothing else works, or nothing can be saved |
 
-Quality: H.263 144p 3GP, H.264 144p, H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p. The default is MPEG-4 360p on Symbian and
+Quality: H.263 144p 3GP, H.264 144p, MPEG-4 240p, H.264 240p, H.263 288p 3GP, MPEG-4 270p, MPEG-4 360p, H.264 360p.
+The 240p ones come only from your own TubeME server. The default is MPEG-4 360p on Symbian and
 MPEG-4 270p elsewhere; H.264 360p is not offered on S60 3rd and 5th Edition (see the table below).
+
+## Your own server
+
+`server/tubeme_server.py` is a small Python server for your own PC (Python, ffmpeg and yt-dlp). It
+fetches, converts and serves videos for the phone, including 240p and 144p, and answers search and
+thumbnails too. Put its address in Settings > My TubeME server and it is asked first; the public
+servers stay as backup. Setup is in [server/README.md](server/README.md).
 
 ## Where each quality comes from
 

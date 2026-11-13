@@ -8,3 +8,5 @@ test/emu/build/
 test/emu/home/
 shots/
 test/emu/tour/
+server/cache/
+__pycache__/

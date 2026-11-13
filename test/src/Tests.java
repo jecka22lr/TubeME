@@ -52,12 +52,15 @@ public class Tests {
         ok(!Util.h264OnlyQvga(null), "no platform: no note");
 
         int[] qc6 = Api.qualities(c6);
-        eq(Integer.valueOf(qc6.length), Integer.valueOf(5), "S60 5th quality count");
+        eq(Integer.valueOf(qc6.length), Integer.valueOf(7), "S60 5th quality count");
+        ok(qc6[2] == Api.Q_MP4V_240 && qc6[3] == Api.Q_H264_240, "240p offered on S60 5th");
         for (int i = 0; i < qc6.length; i++) ok(qc6[i] != Api.Q_H264, "H.264 360p hidden on S60 5th");
         ok(qc6[1] == Api.Q_H264_144, "H.264 144p still offered on S60 5th");
-        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(6), "all offered on Symbian^3");
-        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(6), "all offered when platform unknown");
-        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(6), "a name per quality id");
+        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(8), "all offered on Symbian^3");
+        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(8), "all offered when platform unknown");
+        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(8), "a name per quality id");
+        eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(8), "a server key per quality id");
+        eq(Api.Q_KEYS[Api.Q_MP4V_240], "mp4v-240", "240p key"); eq(Api.Q_KEYS[Api.Q_H263_144], "h263-144", "144p key");
 
         // --- instance list ---
         Api api = new Api();
@@ -290,6 +293,50 @@ public class Tests {
         ok(lg.stream(longv2, Api.Q_H264, 0).server.equals(L), "but still used for the unconverted file");
         Video shortv = new Video(); shortv.id = "abcDEF_-008"; shortv.duration = "54:59";
         ok(lg.stream(shortv, Api.Q_MP4V_360, 0).server.equals(L), "under the limit it converts");
+
+        // --- the user's own TubeME server ---
+        String OWN = "http://127.0.0.1:18088";
+        Api.POLL_EVERY = 50;
+        Api ow = new Api(); ow.legacy = new Vector(); ow.legacy.addElement(L); ow.yt2009.addElement(Y); ow.invidious.addElement(INV);
+        ow.own = OWN + "/";
+        final Vector wsaid = new Vector();
+        ow.progress = new Api.Progress() { public void say(String l) { wsaid.addElement(l); } };
+        Vector or = ow.search("x");
+        Video o1 = (Video) or.elementAt(1);
+        eq(o1.title, "Own r\u00e9sultat 1", "own server answers search first");
+        eq(o1.duration, "1:06", "own duration"); eq(o1.views, "42", "own views");
+        eq(((Video) or.elementAt(0)).views, "", "unknown view count hidden");
+        Video oi = ow.info("abcDEF_-001");
+        eq(oi.title, "Own title", "own info"); eq(oi.duration, "2:05", "own info duration");
+        eq(oi.published, "2026-01-02", "own published"); eq(oi.description, "own description", "own description");
+        eq(Api.thumbUrl(oi, 360), OWN + "/thumb?id=abcDEF_-001&w=320", "own thumb sized for the screen");
+        eq(Api.thumbUrl(oi, 176), OWN + "/thumb?id=abcDEF_-001&w=120", "own thumb small");
+        ok(Net.get(Api.thumbUrl(oi, 360), 80000)[1] == 'P', "own thumb fetch");
+        eq(Integer.valueOf(ow.popular().size()), Integer.valueOf(1), "popular skips the own server (it has none)");
+        ok(ow.ping(OWN), "own server pings");
+        eq(Integer.valueOf(ow.serversFor(Api.Q_MP4V_240)), Integer.valueOf(1), "240p: only the own server");
+        eq(Integer.valueOf(ow.serversFor(Api.Q_H263)), Integer.valueOf(2), "288p: own server doesn't make it, the other two might");
+        eq(Integer.valueOf(ow.serversFor(Api.Q_H264_144)), Integer.valueOf(2), "144p: own server and yt2009");
+        Api.Stream os = ow.stream(oi, Api.Q_MP4V_240, 0);
+        eq(os.url, OWN + "/file/abcDEF_-001-mp4v-240.mp4", "own server converts and hands over the file");
+        eq(os.server, OWN, "own stream server"); ok(os.probe, "own file is checked before playing");
+        eq(wsaid.elementAt(0), "Your server is fetching the video", "progress: fetching");
+        eq(wsaid.elementAt(1), "Converting 40%", "progress: 40%"); eq(wsaid.elementAt(2), "Converting 85%", "progress: 85%");
+        eq(Integer.valueOf(Net.get(os.url, 200000).length), Integer.valueOf(76800), "own file downloads");
+        Video oi2 = new Video(); oi2.id = "abcDEF_-002";
+        ok(ow.stream(oi2, Api.Q_H263, 0).server.equals(L), "a quality the own server lacks goes to the others");
+        Api only1 = new Api(); only1.legacy = new Vector(); only1.own = OWN;
+        threw = false; try { only1.stream(oi2, Api.Q_MP4V, 0); } catch (Api.NoQuality e) { threw = true; }
+        ok(threw, "own server alone: missing quality asks for another");
+        Video bad = new Video(); bad.id = "brokenbroke";
+        threw = false; try { only1.stream(bad, Api.Q_MP4V_240, 0); } catch (Api.NoQuality e) { threw = false; } catch (Exception e) { threw = e.getMessage().indexOf("Video unavailable") >= 0; }
+        ok(threw, "the own server's error message reaches the user");
+        Api notOwn = new Api(); notOwn.legacy = new Vector(); notOwn.legacy.addElement(L); notOwn.own = Y;
+        ok(!notOwn.ping(Y), "an address that isn't a TubeME server is reported down");
+        eq(((Video) notOwn.search("gatos & c\u00e3es").elementAt(0)).source, L, "and search carries on with the other servers");
+        Api gone2 = new Api(); gone2.legacy = new Vector(); gone2.legacy.addElement(L); gone2.own = GONE;
+        ok(gone2.stream(oi2, Api.Q_MP4V, 0).server.equals(L), "own server switched off: the others still serve");
+        Api.POLL_EVERY = 1500;
 
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);

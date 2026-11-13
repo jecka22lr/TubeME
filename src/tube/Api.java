@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.13";
+    static final String VERSION = "0.2.0";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -28,9 +28,19 @@ final class Api {
     /** H.263 176x144 + AMR in 3GP at 10 fps: the smallest files, for the weakest phones. yt2009 only. */
     static final int Q_H263_144 = 5;
 
+    /** MPEG-4 Visual within 320x240: the natural size for QVGA phones. TubeME server only. */
+    static final int Q_MP4V_240 = 6;
+    /** H.264 Baseline within 320x240. TubeME server only. */
+    static final int Q_H264_240 = 7;
+
     /** Indexed by quality id (ids are what settings store, so they never change). */
     static final String[] Q_NAMES = {
-        "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p", "H.264 144p", "H.263 144p (3GP)"
+        "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p", "H.264 144p", "H.263 144p (3GP)",
+        "MPEG-4 240p", "H.264 240p"
+    };
+    /** What a TubeME server calls each quality. */
+    static final String[] Q_KEYS = {
+        "h263-288", "mp4v-270", "mp4v-360", "h264-360", "h264-144", "h263-144", "mp4v-240", "h264-240"
     };
 
     /**
@@ -39,8 +49,10 @@ final class Api {
      * H.264 only up to QVGA).
      */
     static int[] qualities(String platform) {
-        if (Util.h264OnlyQvga(platform)) return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360 };
-        return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+        if (Util.h264OnlyQvga(platform)) {
+            return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360 };
+        }
+        return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
     }
 
     /** Thrown when no server that is up offers the chosen quality: the UI then asks for another. */
@@ -58,21 +70,106 @@ final class Api {
     final Hashtable missing = new Hashtable();
 
     private boolean offers(String kind, String base, int quality) {
+        return offers(kind, base, quality, true);
+    }
+
+    /** mayAsk=false never touches the network (for screens drawn on the UI thread). */
+    private boolean offers(String kind, String base, int quality, boolean mayAsk) {
+        if (kind.equals("T")) {
+            // a TubeME server says exactly what it makes
+            if (!ownKnown) {
+                if (!mayAsk) return true;
+                try {
+                    loadOwn();
+                } catch (Exception e) {
+                    return true;
+                }
+            }
+            return ownQ.containsKey(Q_KEYS[quality]);
+        }
         // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
-        if (kind.equals("L")) return quality != Q_H264_144 && quality != Q_H263_144;
+        if (kind.equals("L")) return quality == Q_H263 || quality == Q_MP4V || quality == Q_MP4V_360 || quality == Q_H264;
+        if (quality == Q_MP4V_240 || quality == Q_H264_240) return false;
         return !missing.containsKey(base + "#" + quality);
     }
+
+    /** The user's own TubeME server (server/tubeme_server.py), always tried first. "" when unset. */
+    String own = "";
+    private final Hashtable ownQ = new Hashtable();
+    private boolean ownKnown;
+
+    /** Call after the own-server address changes. */
+    void forgetOwn() {
+        ownKnown = false;
+        ownQ.clear();
+        order = null;
+    }
+
+    /** Asks the own server what it is and which qualities it makes. */
+    private void loadOwn() throws Exception {
+        String base = Util.cleanBase(own);
+        Object o = Json.parse(Net.getText(base + "/tubeme"));
+        if (Json.str(o, "tubeme").length() == 0) throw new Exception("not a TubeME server");
+        Vector q = Json.arr(o, "qualities");
+        ownQ.clear();
+        for (int i = 0; i < q.size(); i++) {
+            if (q.elementAt(i) instanceof String) ownQ.put(q.elementAt(i), "");
+        }
+        ownKnown = true;
+        Log.add("own server makes " + q.size() + " qualities, 3gp sound " + Json.str(o, "sound3gp"));
+    }
+
+    /**
+     * Has the own server convert the video, showing its progress, and
+     * returns the address of the finished file.
+     */
+    private String prepareOwn(String base, Video v, int quality) throws Exception {
+        long end = System.currentTimeMillis() + MAX_WAIT;
+        String said = "";
+        while (true) {
+            Object o;
+            try {
+                o = Json.parse(Net.getText(base + "/prepare?id=" + v.id + "&q=" + Q_KEYS[quality]));
+            } catch (java.io.IOException io) {
+                String m = io.getMessage();
+                if (m != null && m.startsWith("HTTP 404")) {
+                    ownQ.remove(Q_KEYS[quality]);
+                    throw new Exception("doesn't offer this quality");
+                }
+                throw io;
+            }
+            String st = Json.str(o, "state");
+            if (st.equals("ready")) return Util.resolve(base, Json.str(o, "url"));
+            if (st.equals("error")) throw new Exception(Json.str(o, "error"));
+            if (st.length() == 0) throw new Exception(errorOf(o));
+            String line = st.equals("fetching") ? "Your server is fetching the video"
+                    : st.equals("queued") ? "Waiting for your server"
+                    : "Converting " + Json.str(o, "percent") + "%";
+            if (!line.equals(said)) {
+                said = line;
+                say(line);
+            }
+            if (System.currentTimeMillis() > end) throw new Exception("your server is still converting; try again later");
+            try {
+                Thread.sleep(POLL_EVERY);
+            } catch (InterruptedException ie) {
+            }
+        }
+    }
+
+    static long POLL_EVERY = 1500;
 
     /** How many video servers that aren't known to be down can serve this quality, as far as we know. */
     int serversFor(int quality) {
         Vector v = new Vector();
+        add(v, "T", Util.cleanBase(own));
         add(v, "L", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
         int n = 0;
         for (int i = 0; i < v.size(); i++) {
             String[] e = (String[]) v.elementAt(i);
-            if (!dead.containsKey(e[1]) && offers(e[0], e[1], quality)) n++;
+            if (!dead.containsKey(e[1]) && offers(e[0], e[1], quality, false)) n++;
         }
         return n;
     }
@@ -195,6 +292,7 @@ final class Api {
     /** Every known server as { kind, base }. */
     Vector servers() {
         Vector v = new Vector();
+        add(v, "TubeME server", Util.cleanBase(own));
         add(v, "YtAPILegacy", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "YtAPILegacy", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "yt2009", (String) yt2009.elementAt(i));
@@ -206,6 +304,15 @@ final class Api {
     boolean ping(String base) {
         long t = System.currentTimeMillis();
         try {
+            if (base.equals(Util.cleanBase(own))) {
+                // one request does both: proves it is up and reads what it makes
+                loadOwn();
+                long took = System.currentTimeMillis() - t;
+                ms.put(base, String.valueOf(took));
+                markGood(base);
+                Log.add("ping ok " + took + "ms own " + base);
+                return true;
+            }
             int code = Net.code(base + "/health", PING_TIMEOUT);
             // 404 is fine (older servers have no /health); 5xx means it's up but broken
             if (code >= 500) throw new Exception("HTTP " + code);
@@ -231,6 +338,7 @@ final class Api {
     int sweep(boolean full) {
         int up = 0, tested = 0, invUp = 0;
         Vector v = new Vector();
+        add(v, "T", Util.cleanBase(own));
         add(v, "L", Util.cleanBase(custom));
         for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
@@ -367,6 +475,8 @@ final class Api {
 
     private Vector metaOrder() {
         Vector v = new Vector();
+        String mine = Util.cleanBase(own);
+        if (!metaTrouble(mine)) add(v, "T", mine);
         add(v, "L", Util.cleanBase(custom));
         // YtAPILegacy before Invidious (it can also convert), each group fastest first
         Vector l = new Vector();
@@ -387,6 +497,7 @@ final class Api {
                 if (metaTrouble(e[1]) == (pass == 1)) add(v, e[0], e[1]);
             }
         }
+        add(v, "T", mine);
         return v;
     }
 
@@ -398,30 +509,33 @@ final class Api {
 
     Vector search(String q) throws Exception {
         return list("/get_search_videos.php?query=" + Util.urlEncode(q),
-                "/api/v1/search?type=video&fields=videoId,title,author,lengthSeconds,viewCount&q=" + Util.urlEncode(q));
+                "/api/v1/search?type=video&fields=videoId,title,author,lengthSeconds,viewCount&q=" + Util.urlEncode(q),
+                "/search?q=" + Util.urlEncode(q));
     }
 
     Vector popular() throws Exception {
         return list("/get_top_videos.php",
-                "/api/v1/popular?fields=videoId,title,author,lengthSeconds,viewCount");
+                "/api/v1/popular?fields=videoId,title,author,lengthSeconds,viewCount", null);
     }
 
-    private Vector list(String legacyPath, String invPath) throws Exception {
+    /** path for each kind of server; a null path means that kind can't answer this. */
+    private Vector list(String legacyPath, String invPath, String ownPath) throws Exception {
         Vector order = metaOrder();
         Exception last = null;
         for (int k = 0; k < order.size(); k++) {
             String[] e = (String[]) order.elementAt(k);
+            String path = e[0].equals("L") ? legacyPath : e[0].equals("T") ? ownPath : invPath;
+            if (path == null) continue;
             try {
-                boolean leg = e[0].equals("L");
-                Object o = Json.parse(Net.getText(e[1] + (leg ? legacyPath : invPath)));
+                Object o = Json.parse(Net.getText(e[1] + path));
                 if (!(o instanceof Vector)) throw new Exception(errorOf(o));
                 Vector in = (Vector) o;
                 Vector out = new Vector();
                 for (int i = 0; i < in.size(); i++) {
-                    Video v = leg ? fromLegacy(in.elementAt(i), e[1]) : fromInvidious(in.elementAt(i), e[1]);
+                    Video v = parse(e[0], in.elementAt(i), e[1]);
                     if (v != null) out.addElement(v);
                 }
-                if (leg) lastGood = e[1];
+                if (e[0].equals("L")) lastGood = e[1];
                 markGood(e[1]);
                 metaBad.remove(e[1]);
                 return out;
@@ -435,17 +549,25 @@ final class Api {
         throw new Exception("No server answered" + (last == null ? "" : ": " + msg(last)));
     }
 
+    private static Video parse(String kind, Object o, String base) {
+        if (kind.equals("L")) return fromLegacy(o, base);
+        if (kind.equals("T")) return fromOwn(o, base);
+        return fromInvidious(o, base);
+    }
+
     Video info(String id) throws Exception {
         Vector order = metaOrder();
         Exception last = null;
         for (int k = 0; k < order.size(); k++) {
             String[] e = (String[]) order.elementAt(k);
-            boolean leg = e[0].equals("L");
+            boolean leg = e[0].equals("L"), mine = e[0].equals("T");
             Object o;
             try {
-                o = Json.parse(Net.getText(e[1] + (leg ? "/get-ytvideo-info.php?video_id=" + id
+                String path = leg ? "/get-ytvideo-info.php?video_id=" + id
+                        : mine ? "/info?id=" + id
                         : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,lengthSeconds,viewCount,"
-                        + "description,publishedText,formatStreams")));
+                        + "description,publishedText,formatStreams";
+                o = Json.parse(Net.getText(e[1] + path));
                 if (!(o instanceof Hashtable)) throw new Exception("Bad answer");
             } catch (Exception ex) {
                 Log.err("info " + e[1], ex);
@@ -454,11 +576,11 @@ final class Api {
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;
             }
-            Video v = leg ? fromLegacy(o, e[1]) : fromInvidious(o, e[1]);
+            Video v = parse(e[0], o, e[1]);
             if (v == null) v = new Video();
             v.id = id;
             // the info answer doesn't repeat the id, so the thumbnail address is built here
-            v.thumb = leg ? e[1] + "/thumbnail/" + id : e[1] + "/vi/" + id + "/default.jpg";
+            v.thumb = leg ? e[1] + "/thumbnail/" + id : mine ? e[1] + "/thumb?id=" + id : e[1] + "/vi/" + id + "/default.jpg";
             v.source = leg ? e[1] : null;
             if (v.title.length() == 0 && v.author.length() == 0) {
                 String err = Json.str(o, "error");
@@ -469,6 +591,8 @@ final class Api {
             if (leg) {
                 lastGood = e[1];
                 v.published = Json.str(o, "published_at");
+            } else if (mine) {
+                v.published = Json.str(o, "published");
             } else {
                 v.published = Json.str(o, "publishedText");
                 Vector fs = Json.arr(o, "formatStreams");
@@ -478,6 +602,20 @@ final class Api {
             return v;
         }
         throw new Exception(last == null ? "No servers configured" : msg(last));
+    }
+
+    private static Video fromOwn(Object o, String base) {
+        if (!(o instanceof Hashtable)) return null;
+        Video v = new Video();
+        v.id = Json.str(o, "id");
+        v.title = Json.str(o, "title");
+        v.author = Json.str(o, "author");
+        int len = Util.toInt(Json.str(o, "seconds"), -1);
+        v.duration = len > 0 ? Util.duration(len) : "";
+        String views = Json.str(o, "views");
+        v.views = views.equals("0") ? "" : views;
+        v.thumb = base + "/thumb?id=" + v.id;
+        return v;
     }
 
     private static String errorOf(Object o) {
@@ -541,6 +679,7 @@ final class Api {
     static String thumbUrl(Video v, int screenWidth) {
         if (v.thumb.length() == 0) return "";
         boolean big = screenWidth >= 320;
+        if (v.thumb.indexOf("/thumb?id=") >= 0) return v.thumb + "&w=" + (big ? "320" : "120");
         if (v.thumb.indexOf("/thumbnail/") >= 0) return v.thumb + "?quality=" + (big ? "medium" : "default");
         // Invidious: default.jpg is 120x90, mqdefault.jpg 320x180
         if (big && v.thumb.endsWith("/default.jpg")) return v.thumb.substring(0, v.thumb.length() - 11) + "mqdefault.jpg";
@@ -549,6 +688,7 @@ final class Api {
 
     private Vector streamOrder(Video v, int quality) {
         Vector out = new Vector();
+        add(out, "T", Util.cleanBase(own));
         add(out, "L", Util.cleanBase(custom));
         add(out, "L", v.source);
         int pinned = out.size();
@@ -625,6 +765,9 @@ final class Api {
                 Stream s = newStream(e[1], idx, quality);
                 if (e[0].equals("D")) {
                     s.url = e[1];
+                } else if (e[0].equals("T")) {
+                    if (!alive(e[1])) throw new Exception("server unreachable");
+                    s.url = prepareOwn(e[1], v, quality);
                 } else {
                     s.probe = false;
                     boolean converts = quality == Q_H263 || quality == Q_MP4V || quality == Q_MP4V_360;

@@ -7,7 +7,8 @@ from urllib.parse import urlparse, parse_qs
 
 HITS = set()
 VIDEO = bytes(range(256)) * 300  # 76800 bytes of "video"
-LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG = 18081, 18082, 18083, 18084, 18085, 18086, 18087
+LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN = 18081, 18082, 18083, 18084, 18085, 18086, 18087, 18088
+PREP = {}
 
 def png(w, h):
     import zlib, struct
@@ -93,6 +94,36 @@ class H(BaseHTTPRequestHandler):
             if p == "/mp4_144":
                 return self.send(302, b"", headers={"Location": "/auth.html?redir=rtsp"})
             return self.send(404, b"Cannot GET", "text/html")
+        if port == OWN:      # speaks the TubeME server protocol (server/tubeme_server.py)
+            if p == "/tubeme":
+                self.hit("own-tubeme")
+                return self.send(200, {"tubeme": 1, "version": "0.1.0", "demo": True, "sound3gp": "aac",
+                    "qualities": ["h263-144", "h264-144", "mp4v-240", "h264-240", "mp4v-360"]})
+            if p == "/search":
+                self.hit("own-search")
+                return self.send(200, [{"id": vid(i), "title": "Own r\u00e9sultat %d" % i, "author": "Mine", "seconds": 65 + i, "views": 0 if i == 0 else 42}
+                                       for i in range(2)])
+            if p == "/info":
+                self.hit("own-info")
+                return self.send(200, {"id": q["id"][0], "title": "Own title", "author": "Mine", "seconds": 125, "views": 7,
+                    "published": "2026-01-02", "description": "own description"})
+            if p == "/thumb":
+                self.hit("own-thumb:" + q.get("w", ["-"])[0]); return self.send(200, THUMB, "image/png")
+            if p == "/prepare":
+                key = q["q"][0]
+                if key not in ("h263-144", "h264-144", "mp4v-240", "h264-240", "mp4v-360"):
+                    return self.send(404, {"error": "this server doesn't make quality '%s'" % key})
+                if q["id"][0] == "brokenbroke":
+                    return self.send(200, {"state": "error", "error": "Video unavailable"})
+                k = q["id"][0] + key; PREP[k] = PREP.get(k, 0) + 1
+                self.hit("own-prepare")
+                if PREP[k] == 1: return self.send(200, {"state": "fetching", "percent": 0})
+                if PREP[k] == 2: return self.send(200, {"state": "converting", "percent": 40})
+                if PREP[k] == 3: return self.send(200, {"state": "converting", "percent": 85})
+                return self.send(200, {"state": "ready", "url": "/file/%s-%s.mp4" % (q["id"][0], key), "bytes": len(VIDEO)})
+            if p.startswith("/file/"):
+                self.hit("own-file"); return self.send(200, VIDEO, "video/mp4")
+            return self.send(404, {"error": "not found"})
         if port == Y09HANG:  # a server whose conversion is stuck: answers far too late
             if p == "/health": return self.send(404, b"", "text/html")
             time.sleep(8); return self.send(302, b"", headers={"Location": "/assets/late.mp4"})
@@ -110,12 +141,12 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     secs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG):
+    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN):
         s = HTTPServer(("127.0.0.1", port), H)
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

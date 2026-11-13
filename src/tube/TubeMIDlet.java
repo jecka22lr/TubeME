@@ -67,7 +67,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     private TextBox idBox;
     private Form settingsForm;
     private ChoiceGroup sMode, sQuality, sOpts;
-    private TextField sList, sCustom, sDir;
+    private TextField sList, sCustom, sDir, sOwn;
     private List qualityList;
     private Form savedForm;
     private Form logForm;
@@ -98,6 +98,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         // optional JAD/manifest overrides, so servers can be changed without rebuilding
         String p = getAppProperty("TubeME-List-URL");
         if (p != null && p.trim().length() > 0 && settings.listUrl.equals(Api.DEFAULT_LIST_URL)) settings.listUrl = p.trim();
+        p = getAppProperty("TubeME-Own-Server");
+        if (p != null && p.trim().length() > 0 && api.own.length() == 0) api.own = p.trim();
         p = getAppProperty("TubeME-Server");
         if (p != null && p.trim().length() > 0 && api.custom.length() == 0) api.custom = p.trim();
         menu = new List("TubeME", Choice.IMPLICIT);
@@ -239,9 +241,12 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     public synchronized void say(String line) {
         if (waitText == null) return;
         // the running "Still waiting... N s" line updates in place instead of filling the screen
-        if (line.startsWith("Still waiting") && waitLines.size() > 0
-                && ((String) waitLines.lastElement()).startsWith("Still waiting")) {
-            waitLines.removeElementAt(waitLines.size() - 1);
+        if (waitLines.size() > 0) {
+            String prev = (String) waitLines.lastElement();
+            if ((line.startsWith("Still waiting") && prev.startsWith("Still waiting"))
+                    || (line.startsWith("Converting ") && prev.startsWith("Converting "))) {
+                waitLines.removeElementAt(waitLines.size() - 1);
+            }
         }
         waitLines.addElement(line);
         while (waitLines.size() > 7) waitLines.removeElementAt(0);
@@ -435,12 +440,14 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         sQuality.setSelectedIndex(qIndex(settings.quality), true);
         sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
         sOpts.setSelectedIndex(0, settings.thumbs);
+        sOwn = new TextField("My TubeME server (optional)", api.own, 200, TextField.URL);
         sList = new TextField("Server list URL", settings.listUrl, 200, TextField.URL);
         sCustom = new TextField("My YtAPILegacy server (optional)", api.custom, 200, TextField.URL);
         sDir = new TextField("Download folder (empty = auto)", settings.dir, 200, TextField.ANY);
         settingsForm.append(sMode);
         settingsForm.append(sQuality);
         settingsForm.append(sOpts);
+        settingsForm.append(sOwn);
         settingsForm.append(sList);
         settingsForm.append(sCustom);
         settingsForm.append(sDir);
@@ -457,6 +464,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         String l = sList.getString().trim();
         settings.listUrl = l.length() == 0 ? Api.DEFAULT_LIST_URL : l;
         api.custom = sCustom.getString().trim();
+        String mine = sOwn.getString().trim();
+        if (!mine.equals(api.own)) {
+            api.own = mine;
+            api.forgetOwn();
+        }
         String d = sDir.getString().trim();
         if (!d.equals(settings.dir)) dirOk = null;
         settings.dir = d;
@@ -471,6 +483,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.append(new StringItem("File access", Util.hasFiles() ? "yes" : "no"));
         f.append(new StringItem("In-app video", hasVideoPlayer() ? "yes" : "no"));
         f.append(new StringItem("Auto playback", modeNames[mode()]));
+        if (api.own.length() > 0) f.append(new StringItem("My server", api.own + " (" + api.status(Util.cleanBase(api.own)) + ")"));
         f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
                 + api.invidious.size() + " Invidious"));
         if (qIds.length < Api.Q_NAMES.length) {

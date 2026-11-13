@@ -23,6 +23,10 @@ jobs:
           unzip -q pg.zip && cp proguard-7.4.2/lib/proguard.jar tools/
       - run: ./build.sh
       - run: ./test/run.sh
+      - name: Server tests (demo mode)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 server/test_server.py
       - uses: actions/upload-artifact@v4
         with:
           name: TubeME
@@ -35,4 +39,5 @@ jobs:
             dist/TubeME.jar
             dist/TubeME.jad
             dist/TubeME-*.zip
+            server/tubeme_server.py
           body_path: RELEASE_NOTES.md

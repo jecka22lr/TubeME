@@ -53,7 +53,7 @@ final class Settings {
             if (rs.getNumRecords() < 1) return;
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(rs.getRecord(1)));
             int ver = in.readInt();
-            if (ver != 1 && ver != 2) return;
+            if (ver < 1 || ver > 3) return;
             mode = in.readInt();
             quality = in.readInt();
             thumbs = in.readBoolean();
@@ -69,6 +69,7 @@ final class Settings {
                 Vector m = readList(in);
                 for (int k = 0; k < m.size(); k++) api.missing.put(m.elementAt(k), "");
             }
+            if (ver >= 3) api.own = in.readUTF();
         } catch (Throwable t) {
             // first run or damaged record: defaults are fine
         } finally {
@@ -84,7 +85,7 @@ final class Settings {
         try {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             DataOutputStream o = new DataOutputStream(bo);
-            o.writeInt(2);
+            o.writeInt(3);
             o.writeInt(mode);
             o.writeInt(quality);
             o.writeBoolean(thumbs);
@@ -98,6 +99,7 @@ final class Settings {
             Vector m = new Vector();
             for (java.util.Enumeration en = api.missing.keys(); en.hasMoreElements();) m.addElement(en.nextElement());
             writeList(o, m);
+            o.writeUTF(api.own);
             byte[] d = bo.toByteArray();
             rs = RecordStore.openRecordStore(STORE, true);
             if (rs.getNumRecords() < 1) rs.addRecord(d, 0, d.length);
