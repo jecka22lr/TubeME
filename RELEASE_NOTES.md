@@ -1,8 +1,8 @@
 First public build of TubeME, a YouTube client for J2ME phones (MIDP 2.0 / CLDC 1.1), plus a small server you can run on your own PC.
 
 **Downloads**
-- `TubeME-0.2.0.zip`: the app (jar + jad). Also attached separately as `TubeME.jar` / `TubeME.jad`
-- `TubeME-server-0.2.0.zip`: the optional PC server (Python script + setup guide)
+- `TubeME-0.2.1.zip`: the app (jar + jad). Also attached separately as `TubeME.jar` / `TubeME.jad`
+- `TubeME-server-0.3.0.zip`: the optional server for Windows, macOS or Linux (Python script + setup guide)
 
 **The app**
 - Search, popular, open by ID or link, video page with thumbnail
@@ -18,9 +18,10 @@ First public build of TubeME, a YouTube client for J2ME phones (MIDP 2.0 / CLDC 
 
 **Tested**
 - On a Nokia C6-00 (S60 5th Edition) with the public servers: search, thumbnails, downloading, RealPlayer mode, the quality picker
-- Not yet confirmed on other phones. The server passes its tests offline but has only just started being tried against real YouTube
+- Not yet confirmed on other phones
+- The server: converting real YouTube videos on Windows; its automated tests pass on Linux and Windows (macOS not yet run)
 
 **Known limits**
-- S60 3rd and 5th Edition decode H.264 only up to 320x240, so H.264 360p is not offered there
+- S60 3rd and 5th Edition are listed as decoding H.264 only up to 320x240, so H.264 360p is hidden there unless "Offer every quality" is ticked
 - Public servers differ in which qualities they have, and some conversions never answer
 - The app is unsigned: expect permission prompts
