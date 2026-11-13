@@ -20,9 +20,13 @@ final class Settings {
     /** Give the URL to the phone (browser or native player). */
     static final int MODE_EXTERNAL = 4;
 
-    static final String[] MODE_NAMES = {
-        "Auto", "RealPlayer (Symbian)", "Download, then play", "In-app player", "Phone's player/browser"
-    };
+    /** On Symbian both file routes end in RealPlayer, so the names say what differs. */
+    static String[] modeNames(boolean symbian) {
+        if (symbian) {
+            return new String[] { "Auto", "RealPlayer, stream", "RealPlayer, download first", "In-app player", "Phone's player/browser" };
+        }
+        return new String[] { "Auto", "RealPlayer (Symbian)", "Download, then play", "In-app player", "Phone's player/browser" };
+    }
 
     int mode = MODE_AUTO;
     int quality = Api.Q_MP4V;
@@ -39,7 +43,8 @@ final class Settings {
             rs = RecordStore.openRecordStore(STORE, false);
             if (rs.getNumRecords() < 1) return;
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(rs.getRecord(1)));
-            if (in.readInt() != 1) return;
+            int ver = in.readInt();
+            if (ver != 1 && ver != 2) return;
             mode = in.readInt();
             quality = in.readInt();
             thumbs = in.readBoolean();
@@ -51,6 +56,10 @@ final class Settings {
             if (l.size() > 0) api.legacy = l;
             api.yt2009 = y;
             api.invidious = i;
+            if (ver >= 2) {
+                Vector m = readList(in);
+                for (int k = 0; k < m.size(); k++) api.missing.put(m.elementAt(k), "");
+            }
         } catch (Throwable t) {
             // first run or damaged record: defaults are fine
         } finally {
@@ -66,7 +75,7 @@ final class Settings {
         try {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             DataOutputStream o = new DataOutputStream(bo);
-            o.writeInt(1);
+            o.writeInt(2);
             o.writeInt(mode);
             o.writeInt(quality);
             o.writeBoolean(thumbs);
@@ -77,6 +86,9 @@ final class Settings {
             writeList(o, api.legacy);
             writeList(o, api.yt2009);
             writeList(o, api.invidious);
+            Vector m = new Vector();
+            for (java.util.Enumeration en = api.missing.keys(); en.hasMoreElements();) m.addElement(en.nextElement());
+            writeList(o, m);
             byte[] d = bo.toByteArray();
             rs = RecordStore.openRecordStore(STORE, true);
             if (rs.getNumRecords() < 1) rs.addRecord(d, 0, d.length);

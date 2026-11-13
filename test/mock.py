@@ -42,6 +42,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"invidious": ["http://127.0.0.1:%d/" % INV], "piped": ["https://piped.invalid"],
                     "yt2009": ["http://127.0.0.1:%d" % Y09BAD, "http://127.0.0.1:%d" % Y09],
                     "ytapilegacy": ["http://127.0.0.1:%d" % DEAD, "http://127.0.0.1:%d" % LEG]})
+            if p == "/legacyonly.json":   # a list with one YtAPILegacy server and nothing else
+                return self.send(200, {"invidious": [], "yt2009": [], "ytapilegacy": ["http://127.0.0.1:%d" % LEG]})
             if p == "/health":
                 self.hit("health"); return self.send(200, {"status": "ok"})
             if p == "/get_search_videos.php":

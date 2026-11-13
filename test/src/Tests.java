@@ -208,12 +208,26 @@ public class Tests {
         eq(s3.url, Y + "/assets/abcDEF_-002-http_3gp.bin", "H.263 144p address");
         eq(s3.ext, "3gp", "144p 3gp ext");
         Api lo = new Api(); lo.legacy = new Vector(); lo.legacy.addElement(L);
-        threw = false; try { lo.stream(qv, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("has no 144p") >= 0; }
-        ok(threw, "YtAPILegacy alone can't do 144p, and says so");
+        threw = false; try { lo.stream(qv, Api.Q_H264_144, 0); } catch (Api.NoQuality e) { threw = e.getMessage().startsWith("H.264 144p isn't available"); }
+        ok(threw, "YtAPILegacy alone can't do 144p: asks for another quality");
+        eq(Integer.valueOf(lo.serversFor(Api.Q_H264_144)), Integer.valueOf(0), "no server count for 144p on YtAPILegacy");
+        eq(Integer.valueOf(lo.serversFor(Api.Q_MP4V_360)), Integer.valueOf(1), "server count for 360p");
+        eq(Integer.valueOf(q1.serversFor(Api.Q_H264_144)), Integer.valueOf(1), "144p counted on yt2009");
         Api old = new Api(); old.legacy = new Vector(); old.yt2009.addElement(OLD);
         eq(old.stream(qv, Api.Q_MP4V_360, 0).url, OLD + "/assets/abcDEF_-001-mpeg4.mp4", "360p falls back to /http_mpeg4 on a stock server");
-        threw = false; try { old.stream(qv2, Api.Q_H263, 0); } catch (Exception e) { threw = e.getMessage().indexOf("doesn't offer this quality") >= 0; }
-        ok(threw, "missing quality reported");
+        eq(Integer.valueOf(old.serversFor(Api.Q_H263)), Integer.valueOf(1), "unknown until asked");
+        threw = false; try { old.stream(qv2, Api.Q_H263, 0); } catch (Api.NoQuality e) { threw = true; }
+        ok(threw, "missing quality asks for another");
+        eq(Integer.valueOf(old.serversFor(Api.Q_H263)), Integer.valueOf(0), "what the server lacks is remembered");
+        ok(old.missing.containsKey(OLD + "#" + Api.Q_H263), "remembered per server and quality");
+        eq(Integer.valueOf(old.serversFor(Api.Q_MP4V_360)), Integer.valueOf(1), "other qualities unaffected");
+        Api mix = new Api(); mix.legacy = new Vector(); mix.legacy.addElement(L); mix.yt2009.addElement(OLD);
+        ok(mix.stream(qv2, Api.Q_H263, 0).url.startsWith(L), "another server with the quality is used without asking");
+        Api dn = new Api(); dn.legacy = new Vector(); dn.legacy.addElement(GONE);
+        threw = false; try { dn.stream(qv, Api.Q_MP4V, 0); } catch (Api.NoQuality e) { threw = false; } catch (Exception e) { threw = true; }
+        ok(threw, "servers being down is an error, not a quality question");
+        eq(Settings.modeNames(true)[2], "RealPlayer, download first", "symbian mode name");
+        eq(Settings.modeNames(false)[2], "Download, then play", "other phones keep the plain name");
         Video qv3 = new Video(); qv3.id = "abcDEF_-003";
         threw = false; try { old.stream(qv3, Api.Q_H264_144, 0); } catch (Exception e) { threw = e.getMessage().indexOf("needs a sign-in") >= 0; }
         ok(threw, "sign-in redirect is not mistaken for a video");

@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.1.8";
+    static final String VERSION = "0.1.9";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -41,6 +41,40 @@ final class Api {
     static int[] qualities(String platform) {
         if (Util.h264OnlyQvga(platform)) return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360 };
         return new int[] { Q_H263_144, Q_H264_144, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+    }
+
+    /** Thrown when no server that is up offers the chosen quality: the UI then asks for another. */
+    static final class NoQuality extends Exception {
+        NoQuality(String m) {
+            super(m);
+        }
+    }
+
+    /**
+     * "server#quality" pairs a server answered "don't have that" for. Servers
+     * run different versions, and asking is the only way to find out, so
+     * what was learned is kept (and dropped when the server list is renewed).
+     */
+    final Hashtable missing = new Hashtable();
+
+    private boolean offers(String kind, String base, int quality) {
+        // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
+        if (kind.equals("L")) return quality != Q_H264_144 && quality != Q_H263_144;
+        return !missing.containsKey(base + "#" + quality);
+    }
+
+    /** How many video servers that aren't known to be down can serve this quality, as far as we know. */
+    int serversFor(int quality) {
+        Vector v = new Vector();
+        add(v, "L", Util.cleanBase(custom));
+        for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
+        for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
+        int n = 0;
+        for (int i = 0; i < v.size(); i++) {
+            String[] e = (String[]) v.elementAt(i);
+            if (!dead.containsKey(e[1]) && offers(e[0], e[1], quality)) n++;
+        }
+        return n;
     }
 
     /**
@@ -265,6 +299,8 @@ final class Api {
         yt2009 = y;
         invidious = i;
         order = null;
+        // servers get updated too: ask again what they offer
+        missing.clear();
         return l.size() + y.size() + i.size();
     }
 
@@ -525,9 +561,17 @@ final class Api {
         int n = order.size();
         if (n == 0) throw new Exception("No video servers configured");
         Exception last = null;
+        // a quality question only if some server said "I don't have that" and
+        // no server that is up failed for another reason
+        boolean anyMissing = false, otherFailure = false;
         for (int t = 0; t < n; t++) {
             int idx = (skip + t) % n;
             String[] e = (String[]) order.elementAt(idx);
+            if (!e[0].equals("D") && !offers(e[0], e[1], quality)) {
+                last = new Exception(host(e[1]) + " doesn't offer this quality");
+                anyMissing = true;
+                continue;
+            }
             try {
                 Stream s = new Stream();
                 s.server = Util.baseOf(e[1]);
@@ -539,8 +583,6 @@ final class Api {
                 if (e[0].equals("D")) {
                     s.url = e[1];
                 } else if (e[0].equals("L")) {
-                    // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
-                    if (quality == Q_H264_144 || quality == Q_H263_144) throw new Exception("has no 144p");
                     if (!alive(e[1])) throw new Exception("server unreachable");
                     String u = e[1] + "/direct_url?video_id=" + v.id;
                     if (quality == Q_H263) u += "&codec=h263";
@@ -560,7 +602,10 @@ final class Api {
                             String m = io.getMessage();
                             boolean missing = m != null && m.startsWith("HTTP 404");
                             if (missing && pi + 1 < paths.length) continue;
-                            if (missing) throw new Exception("doesn't offer this quality");
+                            if (missing) {
+                                this.missing.put(e[1] + "#" + quality, "");
+                                throw new Exception("doesn't offer this quality");
+                            }
                             // the server keeps converting after we stop waiting, so a later try is quick
                             if (m != null && m.startsWith("no answer")) throw new Exception("still preparing the video; try again in a minute");
                             throw io;
@@ -573,8 +618,13 @@ final class Api {
                 Log.err("stream " + e[1], ex);
                 say(host(e[1]) + ": " + msg(ex));
                 last = ex;
+                String m = ex.getMessage();
+                boolean notOffered = m != null && m.indexOf("doesn't offer this quality") >= 0;
+                if (notOffered) anyMissing = true;
+                else if (!dead.containsKey(e[1])) otherFailure = true;
             }
         }
+        if (anyMissing && !otherFailure) throw new NoQuality(Q_NAMES[quality] + " isn't available from any server that is up");
         throw new Exception("No server could provide the video: " + msg(last));
     }
 

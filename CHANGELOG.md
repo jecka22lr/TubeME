@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9
+
+- On Symbian the playback modes are named "RealPlayer, stream" and "RealPlayer, download first"
+- Servers differ in which qualities they have. The app now remembers what each server said it
+  doesn't offer, marks qualities with no working server as "(no server)" in the quality lists, and
+  when the chosen quality isn't available it asks which of the available ones to use (showing how
+  many servers have each) and carries on with the play or download
+
 ## 0.1.8
 
 - Two 144p qualities, both from yt2009 servers: "H.264 144p" (256x144 MP4, within what S60 3rd/5th

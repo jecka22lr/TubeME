@@ -86,8 +86,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         settings.load(api);
         // only offer qualities this phone can show; move a saved one that is no longer offered
         qIds = Api.qualities(System.getProperty("microedition.platform"));
-        qNames = new String[qIds.length];
-        for (int i = 0; i < qIds.length; i++) qNames[i] = Api.Q_NAMES[qIds[i]];
+        modeNames = Settings.modeNames(Util.isSymbian());
         if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
         Log.add("qualities offered: " + qIds.length);
         api.progress = this;
@@ -124,7 +123,49 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     private int[] qIds;
-    private String[] qNames;
+    private String[] modeNames;
+
+    /** Quality names for a list, marking the ones no working server offers right now. */
+    private String[] qNames() {
+        String[] n = new String[qIds.length];
+        for (int i = 0; i < qIds.length; i++) {
+            n[i] = Api.Q_NAMES[qIds[i]] + (api.serversFor(qIds[i]) == 0 ? " (no server)" : "");
+        }
+        return n;
+    }
+
+    // what to carry on with once the user has picked another quality
+    private int pendingKind;
+    private Object pendingArg;
+    private List pickList;
+    private int[] pickIds;
+
+    /**
+     * The chosen quality turned out to be unavailable (servers differ in
+     * what they offer): ask which of the available ones to use instead.
+     */
+    private void askQuality(String why, int kind, Object arg) {
+        int n = 0;
+        int[] ids = new int[qIds.length];
+        for (int i = 0; i < qIds.length; i++) {
+            if (qIds[i] != settings.quality && api.serversFor(qIds[i]) > 0) ids[n++] = qIds[i];
+        }
+        if (n == 0) {
+            alert("Not available", why + ", and no other quality is either.", home());
+            return;
+        }
+        pickIds = new int[n];
+        pickList = new List("Pick another quality", Choice.IMPLICIT);
+        for (int i = 0; i < n; i++) {
+            pickIds[i] = ids[i];
+            pickList.append(Api.Q_NAMES[ids[i]] + " (" + api.serversFor(ids[i]) + (api.serversFor(ids[i]) == 1 ? " server)" : " servers)"), null);
+        }
+        pickList.addCommand(cBack);
+        pickList.setCommandListener(this);
+        pendingKind = kind;
+        pendingArg = arg;
+        info("Not available", why + ". Pick another quality.", pickList);
+    }
 
     /** Position of a quality id in the offered list, or -1. */
     private int qIndex(int id) {
@@ -291,7 +332,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 skip = lastNext;
                 play();
             } else if (c == cQuality) {
-                qualityList = new List("Quality", Choice.IMPLICIT, qNames, null);
+                qualityList = new List("Quality", Choice.IMPLICIT, qNames(), null);
                 qualityList.setSelectedIndex(qIndex(settings.quality), true);
                 qualityList.addCommand(cBack);
                 qualityList.setCommandListener(this);
@@ -304,6 +345,15 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 skip = 0;
             }
             show(home());
+        } else if (d == pickList) {
+            if (c == cBack) {
+                show(home());
+            } else {
+                settings.quality = pickIds[pickList.getSelectedIndex()];
+                settings.save(api);
+                skip = 0;
+                run(pendingKind, pendingArg, pendingKind == T_PLAY ? "Finding a server..." : "Preparing download...");
+            }
         } else if (d == waitForm) {
             gen++;
             show(home());
@@ -361,9 +411,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
 
     private void showSettings() {
         settingsForm = new Form("Settings");
-        sMode = new ChoiceGroup("Playback", Choice.POPUP, Settings.MODE_NAMES, null);
+        sMode = new ChoiceGroup("Playback", Choice.POPUP, modeNames, null);
         sMode.setSelectedIndex(settings.mode, true);
-        sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames, null);
+        sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames(), null);
         sQuality.setSelectedIndex(qIndex(settings.quality), true);
         sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails" }, null);
         sOpts.setSelectedIndex(0, settings.thumbs);
@@ -402,7 +452,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.append(new StringItem("Symbian", Util.isSymbian() ? "yes" : "no"));
         f.append(new StringItem("File access", Util.hasFiles() ? "yes" : "no"));
         f.append(new StringItem("In-app video", hasVideoPlayer() ? "yes" : "no"));
-        f.append(new StringItem("Auto playback", Settings.MODE_NAMES[mode()]));
+        f.append(new StringItem("Auto playback", modeNames[mode()]));
         f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
                 + api.invidious.size() + " Invidious"));
         if (qIds.length < Api.Q_NAMES.length) {
@@ -591,6 +641,12 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             } catch (Throwable t) {
                 Log.err("task " + kind, t);
                 if (kind == T_THUMB || g != gen) return;
+                if (t instanceof Api.NoQuality && (kind == T_PLAY || kind == T_DOWNLOAD)) {
+                    // remember what was learned about the servers, then let the user choose
+                    settings.save(api);
+                    askQuality(Api.msg(t), kind, arg);
+                    return;
+                }
                 alert("Error", Api.msg(t), home());
             }
         }
@@ -728,6 +784,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         while (g == gen) {
             try {
                 s = api.stream(v, settings.quality, skip);
+            } catch (Api.NoQuality e) {
+                throw e;
             } catch (Exception e) {
                 // stream() has already been through every server; asking again only repeats the waits
                 last = e;
