@@ -2,6 +2,7 @@ package tube;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Hashtable;
 import java.util.Vector;
 
 import javax.microedition.io.HttpConnection;
@@ -24,8 +25,8 @@ import javax.microedition.midlet.MIDlet;
 
 /** UI and flow. All network and file work happens on worker threads. */
 public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress {
-    private static final int T_SEARCH = 1, T_POPULAR = 2, T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
-            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10, T_COMMENTS = 11;
+    private static final int T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10, T_FEED = 12, T_MORE = 13;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
 
     private Display display;
@@ -34,9 +35,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     private boolean started;
 
     private List menu;
-    private List results;
-    private Vector items = new Vector();
-    private Form videoForm;
+    /** Screens the user went through (lists, video pages, comments), newest last. Back pops. */
+    private final Vector nav = new Vector();
+    /** List or comments Form -> its Feed; video Form -> its Video. */
+    private final Hashtable feedOf = new Hashtable();
+    private final Hashtable videoOf = new Hashtable();
     private Video cur;
     /** The in-app player screen while one is open (a PlayerCanvas, kept untyped on purpose). */
     private Displayable player;
@@ -61,7 +64,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     private final Command cOther = new Command("Server", "Other server", Command.SCREEN, 3);
     private final Command cQuality = new Command("Quality", Command.SCREEN, 4);
     private final Command cComments = new Command("Comments", Command.SCREEN, 2);
-    private Form commentsForm;
+    private final Command cRelated = new Command("Related", "Related videos", Command.SCREEN, 3);
+    private final Command cChannel = new Command("Channel", "Uploader's channel", Command.SCREEN, 3);
+    private final Command cMore = new Command("More", "More comments", Command.SCREEN, 2);
+    private static final String MORE = "More results...";
     private final Command cSave = new Command("Save", Command.OK, 1);
     private final Command cPlayFile = new Command("Play", Command.OK, 1);
 
@@ -100,6 +106,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         // optional JAD/manifest overrides, so servers can be changed without rebuilding
         String p = getAppProperty("TubeME-List-URL");
         if (p != null && p.trim().length() > 0 && settings.listUrl.equals(Api.DEFAULT_LIST_URL)) settings.listUrl = p.trim();
+        // test hook: lets an emulator run start with list thumbnails on
+        if ("1".equals(getAppProperty("TubeME-List-Thumbs"))) settings.listThumbs = true;
         p = getAppProperty("TubeME-Own-Server");
         if (p != null && p.trim().length() > 0 && api.own.length() == 0) api.own = p.trim();
         p = getAppProperty("TubeME-Server");
@@ -274,9 +282,42 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     private Displayable home() {
-        if (videoForm != null && cur != null) return videoForm;
-        if (results != null) return results;
-        return menu;
+        return nav.size() == 0 ? menu : (Displayable) nav.lastElement();
+    }
+
+    /** Opens a screen on top of the ones before it. */
+    private void push(Displayable d) {
+        nav.addElement(d);
+        show(d);
+    }
+
+    /** Back: drops the top screen and returns to the one under it. */
+    private void pop() {
+        if (nav.size() > 0) {
+            Object d = nav.lastElement();
+            nav.removeElementAt(nav.size() - 1);
+            feedOf.remove(d);
+            videoOf.remove(d);
+        }
+        Displayable top = home();
+        Video v = (Video) videoOf.get(top);
+        if (v != null && v != cur) {
+            cur = v;
+            skip = 0;
+            lastNext = 0;
+        } else if (v == null) {
+            cur = null;
+        }
+        show(top);
+    }
+
+    /** Starting over from the menu (a new search, Popular, a link). */
+    private void resetNav() {
+        gen++;
+        nav.removeAllElements();
+        feedOf.clear();
+        videoOf.clear();
+        cur = null;
     }
 
     // ---- commands ----
@@ -299,7 +340,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                     show(searchBox);
                     break;
                 case 1:
-                    run(T_POPULAR, null, "Loading popular videos...");
+                    resetNav();
+                    run(T_FEED, new Feed(Feed.POPULAR, "", "Popular"), "Loading popular videos...");
                     break;
                 case 2:
                     if (idBox == null) {
@@ -325,7 +367,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             }
         } else if (d == searchBox) {
             if (c == cOk && searchBox.getString().trim().length() > 0) {
-                run(T_SEARCH, searchBox.getString().trim(), "Searching...");
+                String q = searchBox.getString().trim();
+                resetNav();
+                run(T_FEED, new Feed(Feed.SEARCH, q, q), "Searching...");
             } else {
                 show(menu);
             }
@@ -334,32 +378,40 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 String id = Util.videoId(idBox.getString());
                 if (id == null) alert("Not a video", "That doesn't look like a video ID or link.", idBox);
                 else {
-                    results = null;
+                    resetNav();
                     run(T_INFO, id, "Loading video...");
                 }
             } else {
                 show(menu);
             }
-        } else if (d == results) {
+        } else if (d instanceof List && feedOf.get(d) != null) {
+            Feed f = (Feed) feedOf.get(d);
             if (c == cBack) {
-                results = null;
-                show(menu);
+                pop();
             } else {
-                int i = results.getSelectedIndex();
-                if (i >= 0 && i < items.size()) run(T_INFO, items.elementAt(i), "Loading video...");
+                int i = ((List) d).getSelectedIndex();
+                if (i >= 0 && i < f.items.size()) run(T_INFO, f.items.elementAt(i), "Loading video...");
+                else if (i >= 0 && !f.end) run(T_MORE, new Object[] { f, d }, "Loading more...");
             }
-        } else if (d == videoForm) {
+        } else if (feedOf.get(d) != null) {
+            // comments
+            if (c == cMore) run(T_MORE, new Object[] { feedOf.get(d), d }, "Loading more comments...");
+            else pop();
+        } else if (videoOf.get(d) != null) {
             if (c == cBack) {
                 gen++;
-                videoForm = null;
-                cur = null;
-                show(results != null ? (Displayable) results : menu);
+                pop();
             } else if (c == cPlay) {
                 play();
             } else if (c == cDownload) {
                 run(T_DOWNLOAD, Boolean.FALSE, "Preparing download...");
             } else if (c == cComments) {
-                run(T_COMMENTS, cur, "Loading comments...");
+                run(T_FEED, new Feed(Feed.COMMENTS, cur.id, "Comments"), "Loading comments...");
+            } else if (c == cRelated) {
+                run(T_FEED, new Feed(Feed.RELATED, cur.id, "Related"), "Loading related videos...");
+            } else if (c == cChannel) {
+                run(T_FEED, new Feed(Feed.CHANNEL, cur.channel, cur.author.length() > 0 ? cur.author : "Channel"),
+                        "Loading the channel...");
             } else if (c == cOther) {
                 skip = lastNext;
                 play();
@@ -376,9 +428,6 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 settings.save(api);
                 skip = 0;
             }
-            show(home());
-        } else if (d == commentsForm) {
-            commentsForm = null;
             show(home());
         } else if (d == pickList) {
             if (c == cBack) {
@@ -452,9 +501,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         sMode.setSelectedIndex(mIndex(settings.mode), true);
         sQuality = new ChoiceGroup("Quality", Choice.POPUP, qNames(), null);
         sQuality.setSelectedIndex(qIndex(settings.quality), true);
-        sOpts = new ChoiceGroup(null, Choice.MULTIPLE, new String[] { "Show thumbnails", "Offer every quality" }, null);
+        sOpts = new ChoiceGroup(null, Choice.MULTIPLE,
+                new String[] { "Thumbnail on video page", "Thumbnails in lists", "Offer every quality" }, null);
         sOpts.setSelectedIndex(0, settings.thumbs);
-        sOpts.setSelectedIndex(1, settings.allQualities);
+        sOpts.setSelectedIndex(1, settings.listThumbs);
+        sOpts.setSelectedIndex(2, settings.allQualities);
         sOwn = new TextField("My TubeME server (optional)", api.own, 200, TextField.URL);
         sList = new TextField("Server list URL", settings.listUrl, 200, TextField.URL);
         sCustom = new TextField("My YtAPILegacy server (optional)", api.custom, 200, TextField.URL);
@@ -476,9 +527,10 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         settings.mode = modeIds[sMode.getSelectedIndex()];
         settings.quality = qIds[sQuality.getSelectedIndex()];
         settings.thumbs = sOpts.isSelected(0);
-        if (settings.allQualities != sOpts.isSelected(1)) {
+        settings.listThumbs = sOpts.isSelected(1);
+        if (settings.allQualities != sOpts.isSelected(2)) {
             // the quality list changes shape: rebuild it and keep the choice if it is still offered
-            settings.allQualities = sOpts.isSelected(1);
+            settings.allQualities = sOpts.isSelected(2);
             loadQualities();
             if (qIndex(settings.quality) < 0) settings.quality = Api.Q_MP4V_360;
         }
@@ -546,17 +598,81 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         show(logForm);
     }
 
-    private void showResults(String title, Vector v) {
-        items = v;
-        results = new List(title, Choice.IMPLICIT);
-        for (int i = 0; i < v.size(); i++) results.append(((Video) v.elementAt(i)).line(), null);
+    /** A list of videos with "More results..." at the end while there are more. */
+    private void showFeed(Feed f) {
+        if (f.comments()) {
+            Form form = new Form("");
+            feedOf.put(form, f);
+            addComments(form, f, 0);
+            form.addCommand(cBack);
+            form.setCommandListener(this);
+            push(form);
+            return;
+        }
+        List l = new List(f.title, Choice.IMPLICIT);
         try {
-            results.setFitPolicy(Choice.TEXT_WRAP_ON);
+            l.setFitPolicy(Choice.TEXT_WRAP_ON);
         } catch (Throwable t) {
         }
-        results.addCommand(cBack);
-        results.setCommandListener(this);
-        show(results);
+        feedOf.put(l, f);
+        addRows(l, f, 0);
+        l.addCommand(cBack);
+        l.setCommandListener(this);
+        push(l);
+    }
+
+    /** Adds feed entries from index from on, keeping "More results..." last. */
+    private void addRows(List l, Feed f, int from) {
+        if (l.size() > from) l.delete(from); // the old "More results..." row
+        for (int i = from; i < f.items.size(); i++) l.append(((Video) f.items.elementAt(i)).line(), null);
+        if (!f.end) l.append(MORE, null);
+        if (from > 0 && from < l.size()) l.setSelectedIndex(from, true);
+        if (settings.listThumbs && from < f.items.size()) new Thread(new RowIcons(l, f, from, f.items.size())).start();
+    }
+
+    private void addComments(Form form, Feed f, int from) {
+        for (int i = from; i < f.items.size(); i++) {
+            String[] c = (String[]) f.items.elementAt(i);
+            // author as the label; likes and age on a line of their own under the text
+            form.append(new StringItem(c[0].length() > 0 ? c[0] : "?", c[1] + (c[2].length() > 0 ? "\n(" + c[2] + ")" : "") + "\n"));
+        }
+        form.setTitle("Comments (" + f.items.size() + (f.end ? ")" : "+)"));
+        if (f.end) form.removeCommand(cMore);
+        else form.addCommand(cMore);
+    }
+
+    /** Loads small thumbnails into list rows one by one, as plain list icons. */
+    private final class RowIcons implements Runnable {
+        private final List l;
+        private final Feed f;
+        private final int from, to;
+
+        RowIcons(List l, Feed f, int from, int to) {
+            this.l = l;
+            this.f = f;
+            this.from = from;
+            this.to = to;
+        }
+
+        public void run() {
+            int w = l.getWidth() / 4;
+            if (w > 80) w = 80;
+            if (w < 32) w = 32;
+            int h = w * 3 / 4;
+            for (int i = from; i < to; i++) {
+                if (!nav.contains(l)) return; // the list was left
+                Video v = (Video) f.items.elementAt(i);
+                try {
+                    String u = Api.thumbUrl(v, 0);
+                    if (u.length() == 0) continue;
+                    byte[] d = Net.get(u, 40000, 15000);
+                    Image img = Util.fit(Image.createImage(d, 0, d.length), w, h);
+                    if (i < l.size() && nav.contains(l)) l.set(i, v.line(), img);
+                } catch (Throwable t) {
+                    Log.err("row icon " + i, t);
+                }
+            }
+        }
     }
 
     private void showVideo(Video v, int g) {
@@ -575,16 +691,18 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.addCommand(cPlay);
         if (Util.hasFiles()) f.addCommand(cDownload);
         f.addCommand(cComments);
+        f.addCommand(cRelated);
+        if (v.channel.length() > 0) f.addCommand(cChannel);
         f.addCommand(cQuality);
         f.addCommand(cOther);
         f.addCommand(cBack);
         f.setCommandListener(this);
-        videoForm = f;
-        show(f);
+        videoOf.put(f, v);
+        push(f);
         // (no heap check: totalMemory() is only the current heap on S60, not the limit;
         // a failed decode is caught and logged by the task)
         if (settings.thumbs) {
-            new Thread(new Task(T_THUMB, v, g)).start();
+            new Thread(new Task(T_THUMB, new Object[] { v, f }, g)).start();
         }
     }
 
@@ -620,20 +738,28 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             if (kind != T_THUMB) Log.add("task " + kind + " start");
             try {
                 switch (kind) {
-                    case T_SEARCH: {
+                    case T_FEED: {
                         freshServers(g);
-                        Vector v = api.search((String) arg);
+                        Feed f = (Feed) arg;
+                        api.open(f);
                         if (g != gen) return;
-                        if (v.size() == 0) info("Search", "Nothing found.", menu);
-                        else showResults((String) arg, v);
+                        if (f.items.size() == 0) {
+                            info(f.title, f.comments() ? "No comments on this video." : "Nothing found.", home());
+                        } else {
+                            showFeed(f);
+                        }
                         break;
                     }
-                    case T_POPULAR: {
-                        freshServers(g);
-                        Vector v = api.popular();
+                    case T_MORE: {
+                        Feed f = (Feed) ((Object[]) arg)[0];
+                        Displayable d = (Displayable) ((Object[]) arg)[1];
+                        int before = f.items.size();
+                        api.more(f);
                         if (g != gen) return;
-                        if (v.size() == 0) info("Popular", "The server returned no videos.", menu);
-                        else showResults("Popular", v);
+                        if (d instanceof List) addRows((List) d, f, before);
+                        else addComments((Form) d, f, before);
+                        if (f.items.size() == before) info(f.title, "That's all there is.", d);
+                        else show(d);
                         break;
                     }
                     case T_INFO: {
@@ -646,6 +772,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                             Video s = (Video) arg;
                             if (v.duration.length() == 0) v.duration = s.duration;
                             if (v.author.length() == 0) v.author = s.author;
+                            if (v.channel.length() == 0) v.channel = s.channel;
                         }
                         showVideo(v, g);
                         break;
@@ -675,28 +802,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                         showServers();
                         break;
                     case T_THUMB:
-                        doThumb((Video) arg);
+                        doThumb((Video) ((Object[]) arg)[0], (Form) ((Object[]) arg)[1]);
                         break;
-                    case T_COMMENTS: {
-                        Video v = (Video) arg;
-                        Vector cs = api.comments(v.id);
-                        if (g != gen) return;
-                        if (cs.size() == 0) {
-                            info("Comments", "No comments on this video.", home());
-                            break;
-                        }
-                        Form f = new Form("Comments (" + cs.size() + ")");
-                        for (int i = 0; i < cs.size(); i++) {
-                            String[] c = (String[]) cs.elementAt(i);
-                            // author as the label; likes and age on a line of their own under the text
-                            f.append(new StringItem(c[0].length() > 0 ? c[0] : "?", c[1] + (c[2].length() > 0 ? "\n(" + c[2] + ")" : "") + "\n"));
-                        }
-                        f.addCommand(cBack);
-                        f.setCommandListener(TubeMIDlet.this);
-                        commentsForm = f;
-                        show(f);
-                        break;
-                    }
                     case T_LOGFILE: {
                         String path = dir() + "tubeme-log.txt";
                         OutputStream o = Files.openOut(path);
@@ -726,7 +833,8 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         }
     }
 
-    private boolean listTried;
+    private long listTriedAt;
+    private boolean listRunning;
     private final Object listLock = new Object();
 
     /**
@@ -736,30 +844,37 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
      */
     private void freshServers(int g) {
         long now = System.currentTimeMillis();
-        if (settings.lastUpdate != 0 && now - settings.lastUpdate < UPDATE_EVERY) return;
-        // a failed attempt is not recorded as an update, so the next start tries again
+        // knowing only the built-in server means the list never loaded (say, no network at first start)
+        boolean thin = api.yt2009.size() + api.invidious.size() == 0;
+        if (!thin && settings.lastUpdate != 0 && now - settings.lastUpdate < UPDATE_EVERY) return;
+        // a failed attempt is tried again after a minute, never while one is running
         synchronized (listLock) {
-            if (listTried) return;
-            listTried = true;
+            if (listRunning || now - listTriedAt < 60000) return;
+            listRunning = true;
+            listTriedAt = now;
         }
         try {
-            api.updateInstances(settings.listUrl);
+            int n = api.updateInstances(settings.listUrl);
             settings.lastUpdate = now;
             settings.save(api);
+            Log.add("server list: " + n + " servers");
         } catch (Throwable t) {
             Log.err("server list", t);
+        } finally {
+            synchronized (listLock) {
+                listRunning = false;
+            }
         }
     }
 
-    private void doThumb(Video v) throws Exception {
+    private void doThumb(Video v, Form f) throws Exception {
         String u = Api.thumbUrl(v, display.getCurrent() == null ? 240 : display.getCurrent().getWidth());
         if (u.length() == 0) return;
         Log.add("thumb " + u + " free=" + (Runtime.getRuntime().freeMemory() / 1024) + "K");
         byte[] d = Net.get(u, 80000);
         Image img = Image.createImage(d, 0, d.length);
         Log.add("thumb ok " + d.length + "b " + img.getWidth() + "x" + img.getHeight());
-        Form f = videoForm;
-        if (f != null && cur == v) {
+        if (videoOf.get(f) == v) {
             Thumb t = new Thumb(img);
             t.setLayout(Item.LAYOUT_CENTER | Item.LAYOUT_NEWLINE_AFTER);
             f.insert(0, t);

@@ -17,6 +17,49 @@ final class Util {
 
     private Util() {}
 
+    /** Undoes %XX escapes (ASCII only, which is all a handle can hold). */
+    static String percentDecode(String s) {
+        if (s == null || s.indexOf('%') < 0) return s == null ? "" : s;
+        StringBuffer b = new StringBuffer();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '%' && i + 2 < s.length()) {
+                try {
+                    b.append((char) Integer.parseInt(s.substring(i + 1, i + 3), 16));
+                    i += 2;
+                    continue;
+                } catch (NumberFormatException e) {
+                }
+            }
+            b.append(c);
+        }
+        return b.toString();
+    }
+
+    /**
+     * Shrinks an image to fit w x h, keeping its shape (nearest pixel, which
+     * is plenty for a list icon). Small screens and heaps can't afford the
+     * full thumbnail for every row.
+     */
+    static javax.microedition.lcdui.Image fit(javax.microedition.lcdui.Image src, int w, int h) {
+        int sw = src.getWidth(), sh = src.getHeight();
+        if (sw <= w && sh <= h) return src;
+        int dw = w, dh = sh * w / sw;
+        if (dh > h) {
+            dh = h;
+            dw = sw * h / sh;
+        }
+        if (dw < 1) dw = 1;
+        if (dh < 1) dh = 1;
+        int[] row = new int[sw];
+        int[] out = new int[dw * dh];
+        for (int y = 0; y < dh; y++) {
+            src.getRGB(row, 0, sw, 0, y * sh / dh, sw, 1);
+            for (int x = 0; x < dw; x++) out[y * dw + x] = row[x * sw / dw];
+        }
+        return javax.microedition.lcdui.Image.createRGBImage(out, dw, dh, false);
+    }
+
     /** Percent-encodes as UTF-8. */
     static String urlEncode(String s) {
         StringBuffer b = new StringBuffer();

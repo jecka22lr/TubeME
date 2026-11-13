@@ -15,6 +15,8 @@ final class Video {
     String stream;
     /** Server that answered for this video; tried first for playback. */
     String source;
+    /** The uploader's channel: a UC... id or an @handle, "" when unknown. */
+    String channel = "";
 
     /** One line for result lists. */
     String line() {

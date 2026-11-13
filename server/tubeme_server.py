@@ -16,10 +16,11 @@ if none is installed.
 
 What the phone app asks for:
     /tubeme                 what this server is and which qualities it makes
-    /search?q=...           search results
-    /popular                popular videos right now
+    /search?q=...&page=1    search results, 15 a page
+    /popular?page=1         popular videos right now
+    /channel?id=UC...&page=1  a channel's newest videos (id may also be an @handle)
     /info?id=...            one video's details
-    /comments?id=...        the top comments
+    /comments?id=...&page=1 the top comments, 30 a page
     /thumb?id=...&w=320     thumbnail, scaled to the phone's screen
     /prepare?id=...&q=...   start (or check on) a conversion; answers with progress
     /file/<name>            the converted file (supports resuming and seeking)
@@ -40,7 +41,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -277,7 +278,8 @@ class Server:
         self.slots = threading.Semaphore(workers)
         self.info_cache = {}
         self.comment_cache = {}
-        self.popular_cache = None
+        self.list_cache = {}
+        self.popular_list = None
         encoders = run(["ffmpeg", "-hide_banner", "-encoders"]).stdout.decode("utf-8", "replace")
         self.has_amr = "libopencore_amrnb" in encoders
         self.qualities = []
@@ -294,46 +296,76 @@ class Server:
 
     # ---------- YouTube side ----------
 
+    PAGE = 15
+    COMMENT_PAGE = 30
+
     def entries(self, res):
         out = []
         for e in res.get("entries") or []:
             if not e or not ID_RE.match(str(e.get("id", ""))):
                 continue
             out.append(dict(id=e["id"], title=e.get("title") or "", author=e.get("channel") or e.get("uploader") or "",
+                            channel_id=e.get("channel_id") or "",
                             seconds=int(e.get("duration") or 0), views=int(e.get("view_count") or 0)))
         return out
 
-    def popular(self):
+    def flat(self, url, page, timeout=60):
+        """One page of a YouTube list (search, playlist, channel) without loading every video."""
+        first = (page - 1) * self.PAGE + 1
+        return self.entries(json.loads(self.tools.ytdlp(
+            ["--flat-playlist", "-J", "--playlist-items", "%d-%d" % (first, first + self.PAGE - 1), url], timeout=timeout)))
+
+    def demo_list(self, title, page, pages=3):
+        if page > pages:
+            return []
+        base = (page - 1) * self.PAGE
+        return [dict(id="demo%07d" % (base + i), title="%s %d" % (title, base + i), author="TubeME demo",
+                     channel_id="UCdemodemodemodemodemo00", seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
+
+    def popular(self, page=1):
         """Popular videos, kept for half an hour (the charts change slowly)."""
-        if self.popular_cache and time.time() - self.popular_cache[0] < 1800:
-            return self.popular_cache[1]
+        key = ("popular", page)
+        hit = self.list_cache.get(key)
+        if hit and time.time() - hit[0] < 1800:
+            return hit[1]
         if self.demo:
-            out = [dict(id="demo%07d" % i, title="Popular demo clip %d" % i, author="TubeME demo",
-                        seconds=8 + i * 4, views=5000 * i) for i in range(1, 5)]
+            out = self.demo_list("Popular demo clip", page)
         else:
             import random
             lists = HYPE_PLAYLISTS[:]
-            random.shuffle(lists)
+            if page == 1:
+                random.shuffle(lists)
+                self.popular_list = None
+            else:
+                # later pages come from the chart page 1 came from
+                lists = [self.popular_list] if self.popular_list else lists
             out, last = [], None
             for pl in lists[:3]:
                 try:
-                    res = json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "--playlist-end", "25",
-                                                       "https://www.youtube.com/playlist?list=" + pl], timeout=60))
-                    out = self.entries(res)
-                    if out:
+                    out = self.flat("https://www.youtube.com/playlist?list=" + pl, page)
+                    if out or page > 1:
+                        self.popular_list = pl
                         break
                 except Exception as e:
                     last = e
-            if not out:
+            if not out and page == 1:
                 raise RuntimeError("couldn't load popular videos" + (": " + short(last) if last else ""))
-        self.popular_cache = (time.time(), out)
+        self.list_cache[key] = (time.time(), out)
         return out
 
-    def search(self, q):
+    def search(self, q, page=1):
         if self.demo:
-            return [dict(id="demo%07d" % i, title="Demo clip %d (%s)" % (i, q), author="TubeME demo",
-                         seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
-        return self.entries(json.loads(self.tools.ytdlp(["--flat-playlist", "-J", "ytsearch15:" + q], timeout=60)))
+            return self.demo_list("Demo clip (%s)" % q, page)
+        n = page * self.PAGE
+        return self.flat("ytsearch%d:%s" % (n, q), page)
+
+    def channel(self, ref, page=1):
+        """A channel's newest videos. ref is a UC... id or an @handle."""
+        if self.demo:
+            return self.demo_list("Channel clip", page)
+        url = ("https://www.youtube.com/channel/%s/videos" % ref) if ref.startswith("UC") else \
+              ("https://www.youtube.com/%s/videos" % ref)
+        return self.flat(url, page)
 
     def info(self, vid):
         if vid in self.info_cache:
@@ -341,6 +373,7 @@ class Server:
         if self.demo:
             n = int(vid[4:] or 1) if vid.startswith("demo") else 1
             d = dict(id=vid, title="Demo clip %d" % n, author="TubeME demo", seconds=8 + n * 4, views=1000 * n,
+                     channel_id="UCdemodemodemodemodemo00",
                      published="2026-01-01", description="A generated test pattern with a tone.\nNo internet involved.")
         else:
             # details don't need a playable format, so a format problem must not hide them
@@ -348,32 +381,37 @@ class Server:
                                              "https://www.youtube.com/watch?v=" + vid], timeout=90))
             up = e.get("upload_date") or ""
             d = dict(id=vid, title=e.get("title") or "", author=e.get("channel") or e.get("uploader") or "",
+                     channel_id=e.get("channel_id") or "",
                      seconds=int(e.get("duration") or 0), views=int(e.get("view_count") or 0),
                      published=("%s-%s-%s" % (up[:4], up[4:6], up[6:8])) if len(up) == 8 else "",
                      description=(e.get("description") or "")[:1500])
         self.info_cache[vid] = d
         return d
 
-    def comments(self, vid):
-        """The top comments, newest fetch kept for ten minutes."""
+    def comments(self, vid, page=1):
+        """Top comments, COMMENT_PAGE at a time. yt-dlp can't start part-way, so page n fetches
+        the first n pages and keeps them for ten minutes."""
+        want = page * self.COMMENT_PAGE
         hit = self.comment_cache.get(vid)
-        if hit and time.time() - hit[0] < 600:
-            return hit[1]
-        if self.demo:
-            out = [dict(author="Viewer %d" % i, text="Demo comment number %d.\nSecond line." % i, likes=10 - i, when="%d days ago" % i)
-                   for i in range(1, 4)]
+        if hit and time.time() - hit[0] < 600 and (len(hit[1]) >= want or hit[2]):
+            got, complete = hit[1], hit[2]
         else:
-            e = json.loads(self.tools.ytdlp(["-J", "--skip-download", "--ignore-no-formats-error", "--write-comments",
-                                             "--extractor-args", "youtube:max_comments=30,30,0,0;comment_sort=top",
-                                             "https://www.youtube.com/watch?v=" + vid], timeout=120))
-            out = []
-            for c in e.get("comments") or []:
-                if not c or not c.get("text"):
-                    continue
-                out.append(dict(author=(c.get("author") or "").lstrip("@"), text=c["text"][:600],
-                                likes=int(c.get("like_count") or 0), when=c.get("_time_text") or ""))
-        self.comment_cache[vid] = (time.time(), out)
-        return out
+            if self.demo:
+                got = [dict(author="Viewer %d" % i, text="Demo comment number %d.\nSecond line." % i, likes=max(0, 80 - i),
+                            when="%d days ago" % i) for i in range(1, 71)]
+            else:
+                e = json.loads(self.tools.ytdlp(["-J", "--skip-download", "--ignore-no-formats-error", "--write-comments",
+                                                 "--extractor-args", "youtube:max_comments=%d,%d,0,0;comment_sort=top" % (want, want),
+                                                 "https://www.youtube.com/watch?v=" + vid], timeout=60 + 30 * page))
+                got = []
+                for c in e.get("comments") or []:
+                    if not c or not c.get("text"):
+                        continue
+                    got.append(dict(author=(c.get("author") or "").lstrip("@"), text=c["text"][:600],
+                                    likes=int(c.get("like_count") or 0), when=c.get("_time_text") or ""))
+            complete = len(got) < want
+            self.comment_cache[vid] = (time.time(), got, complete)
+        return got[(page - 1) * self.COMMENT_PAGE: want]
 
     def thumb(self, vid, width):
         width = 320 if width >= 320 else 120
@@ -623,21 +661,30 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/tubeme":
                 return self.send_json({"tubeme": 1, "version": VERSION, "demo": s.demo, "qualities": s.qualities,
-                                       "features": ["comments", "popular"],
+                                       "features": ["comments", "popular", "channel", "pages"],
                                        "sound3gp": "amr" if s.has_amr else "aac"})
+            try:
+                page = max(1, min(20, int(q.get("page", "1"))))
+            except ValueError:
+                page = 1
             if p == "/search":
                 if not q.get("q", "").strip():
                     return self.fail(400, "q is required")
-                return self.send_json(s.search(q["q"].strip()))
+                return self.send_json(s.search(q["q"].strip(), page))
             if p == "/popular":
-                return self.send_json(s.popular())
+                return self.send_json(s.popular(page))
+            if p == "/channel":
+                ref = q.get("id", "")
+                if not re.match(r"^(UC[A-Za-z0-9_-]{22}|@[A-Za-z0-9._-]{1,60})$", ref):
+                    return self.fail(400, "id must be a UC... channel id or an @handle")
+                return self.send_json(s.channel(ref, page))
             vid = q.get("id", "")
             if p in ("/info", "/thumb", "/prepare", "/comments") and not ID_RE.match(vid):
                 return self.fail(400, "id must be an 11 character video id")
             if p == "/info":
                 return self.send_json(s.info(vid))
             if p == "/comments":
-                return self.send_json(s.comments(vid))
+                return self.send_json(s.comments(vid, page))
             if p == "/thumb":
                 try:
                     w = int(q.get("w", "320"))

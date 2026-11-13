@@ -53,9 +53,24 @@ class H(BaseHTTPRequestHandler):
                 self.hit("health"); return self.send(200, {"status": "ok"})
             if p == "/get_search_videos.php":
                 self.hit("legacy-search:" + q["query"][0])
+                if q["query"][0] == "paged":   # count-based paging: 40 results exist, the first <count> come back
+                    n = min(40, int(q.get("count", ["15"])[0]))
+                    return self.send(200, [{"video_id": "legpage%04d" % i, "title": "Leg %d" % i, "author": "A", "channel_id": "UCleglegleglegleglegleg0"} for i in range(n)])
                 return self.send(200, [{"video_id": vid(i), "title": "Tést \"vidéo\" №%d \U0001F600" % i, "author": "Canal Ç",
                     "duration": "3:2%d" % i, "views": "1,234 views", "thumbnail": "/thumbnail/" + vid(i),
-                    "channel_thumbnail": "/channel_icon/x"} for i in range(3)])
+                    "channel_thumbnail": "/channel_icon/x", "channel_id": "UCcanalcanalcanalcanal00"} for i in range(3)])
+            if p == "/get_related_videos.php":
+                self.hit("legacy-related")
+                off = int(q.get("offset", ["0"])[0])
+                if off >= 30: return self.send(200, [])
+                return self.send(200, [{"video_id": "legrel%05d" % (off + i), "title": "Related %d" % (off + i), "author": "R", "views": "5",
+                    "published_at": "1 day ago"} for i in range(15)])
+            if p in ("/get_author_videos_by_id.php", "/get_author_videos.php"):
+                self.hit("legacy-channel")
+                n = min(20, int(q.get("count", ["15"])[0]))
+                who = q.get("channel_id", q.get("author", ["?"]))[0]
+                return self.send(200, {"channel_info": {"title": "Chan " + who}, "videos": [{"video_id": "legchan%04d" % i, "title": "Chan vid %d" % i,
+                    "views": "3", "published_at": "2 days ago"} for i in range(n)]})
             if p == "/get_top_videos.php":
                 self.hit("legacy-top")
                 return self.send(200, [{"video_id": vid(9), "title": "Top one", "author": "Someone", "duration": "PT1H2M3S",
@@ -105,19 +120,31 @@ class H(BaseHTTPRequestHandler):
                 self.hit("own-tubeme")
                 return self.send(200, {"tubeme": 1, "version": "0.1.0", "demo": True, "sound3gp": "aac",
                     "qualities": ["h263-144", "h264-144", "mp4v-240", "h264-240", "mp4v-360"]})
+            pg = int(q.get("page", ["1"])[0])
             if p == "/popular":
                 self.hit("own-popular")
+                if pg > 1: return self.send(200, [])
                 return self.send(200, [{"id": vid(7), "title": "Own popular", "author": "Mine", "seconds": 30, "views": 1}])
             if p == "/search":
                 self.hit("own-search")
-                return self.send(200, [{"id": vid(i), "title": "Own r\u00e9sultat %d" % i, "author": "Mine", "seconds": 65 + i, "views": 0 if i == 0 else 42}
-                                       for i in range(2)])
+                if q["q"][0] == "paged":
+                    if pg > 3: return self.send(200, [])
+                    return self.send(200, [{"id": "ownpage%04d" % (pg * 100 + i), "title": "Own p%d #%d" % (pg, i), "author": "Mine",
+                                            "channel_id": "UCminemineminemineminem0"} for i in range(15)])
+                return self.send(200, [{"id": vid(i), "title": "Own r\u00e9sultat %d" % i, "author": "Mine", "seconds": 65 + i, "views": 0 if i == 0 else 42,
+                                        "channel_id": "UCminemineminemineminem0"} for i in range(2)])
+            if p == "/channel":
+                self.hit("own-channel")
+                if pg > 2: return self.send(200, [])
+                return self.send(200, [{"id": "ownchan%04d" % (pg * 100 + i), "title": "Own chan %d" % i, "author": "Mine"} for i in range(15)])
             if p == "/info":
                 self.hit("own-info")
                 return self.send(200, {"id": q["id"][0], "title": "Own title", "author": "Mine", "seconds": 125, "views": 7,
-                    "published": "2026-01-02", "description": "own description"})
+                    "published": "2026-01-02", "description": "own description", "channel_id": "UCminemineminemineminem0"})
             if p == "/comments":
                 self.hit("own-comments")
+                if pg == 2: return self.send(200, [{"author": "Late", "text": "page two", "likes": 0, "when": ""}])
+                if pg > 2: return self.send(200, [])
                 return self.send(200, [{"author": "Zed", "text": "first " + "y" * 600, "likes": 12, "when": "2 days ago"},
                                        {"author": "", "text": "anon", "likes": 1, "when": ""}, {"author": "Nope", "text": ""}])
             if p == "/thumb":
@@ -143,12 +170,27 @@ class H(BaseHTTPRequestHandler):
         if port == INV:
             if p == "/api/v1/search":
                 self.hit("inv-search")
+                pg = int(q.get("page", ["1"])[0])
+                if q["q"][0] == "paged":
+                    if pg > 2: return self.send(200, [])
+                    return self.send(200, [{"type": "video", "videoId": "invpage%04d" % (pg * 100 + i), "title": "Inv p%d" % pg, "author": "I",
+                                            "authorId": "UCinvinvinvinvinvinvinv0"} for i in range(10)])
                 return self.send(200, [{"type": "video", "videoId": vid(5), "title": "Inv result", "author": "Inv author",
-                    "lengthSeconds": 3725, "viewCount": 99}])
+                    "lengthSeconds": 3725, "viewCount": 99, "authorId": "UCinvinvinvinvinvinvinv0"}])
+            if p.startswith("/api/v1/channels/"):
+                self.hit("inv-channel")
+                cont = q.get("continuation", [None])[0]
+                if cont == "tok2": return self.send(200, {"videos": [{"videoId": "invchan%04d" % (200 + i), "title": "IC2"} for i in range(5)]})
+                return self.send(200, {"videos": [{"videoId": "invchan%04d" % i, "title": "IC1"} for i in range(5)], "continuation": "tok2"})
             if p.startswith("/api/v1/comments/"):
                 self.hit("inv-comments")
-                return self.send(200, {"videoId": p.split("/")[-1], "comments": [
+                cont = q.get("continuation", [None])[0]
+                if cont == "ctok": return self.send(200, {"comments": [{"author": "Second", "content": "page 2", "likeCount": 3}]})
+                return self.send(200, {"videoId": p.split("/")[-1], "continuation": "ctok", "comments": [
                     {"author": "Inv person", "content": "inv comment", "publishedText": "5 hours ago", "likeCount": 0}]})
+            if p.startswith("/api/v1/videos/") and q.get("fields", [""])[0] == "recommendedVideos":
+                self.hit("inv-related")
+                return self.send(200, {"recommendedVideos": [{"videoId": "invrel%05d" % i, "title": "IR", "author": "x", "authorId": "UCinvinvinvinvinvinvinv0"} for i in range(4)]})
             if p.startswith("/api/v1/videos/"):
                 self.hit("inv-info")
                 return self.send(200, {"videoId": p.split("/")[-1], "title": "Inv title", "author": "Inv author", "lengthSeconds": 61,
@@ -163,7 +205,7 @@ def main():
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

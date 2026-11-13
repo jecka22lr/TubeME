@@ -47,17 +47,29 @@ a = sys.argv[1:]
 if "--version" in a: print("stub-1"); sys.exit(0)
 url = a[-1]
 vid = url.split("v=")[-1]
-if "playlist?list=OL" in url:
-    assert "--flat-playlist" in a and a[a.index("--playlist-end") + 1] == "25"
-    print(json.dumps({"entries": [{"id": "popvideo%03d" % i, "title": "Hot %d" % i, "uploader": "Up", "duration": 30} for i in range(3)]})); sys.exit(0)
-if url.startswith("ytsearch15:"):
+def items():
+    lo, hi = a[a.index("--playlist-items") + 1].split("-")
+    return int(lo), int(hi)
+if "playlist?list=OL" in url or "/videos" in url:
+    assert "--flat-playlist" in a
+    lo, hi = items()
+    tag = "popvideo" if "list=OL" in url else "chanvid" + ("U" if "/channel/UC" in url else "H")
+    print(json.dumps({"entries": [{"id": "%s%03d" % (tag[:8], i), "title": "Hot %d" % i, "uploader": "Up", "duration": 30, "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx"}
+                                  for i in range(lo, min(hi, 20) + 1)]})); sys.exit(0)
+if url.startswith("ytsearch"):
     assert "--flat-playlist" in a and "-J" in a
-    print(json.dumps({"entries": [{"id": "realvideo%02d" % i, "title": "Result %d" % i, "channel": "Chan", "duration": 61.0, "view_count": 5}
-                                   for i in range(2)] + [{"id": "short", "title": "not a video id"}, None]})); sys.exit(0)
+    lo, hi = items()
+    assert url.startswith("ytsearch%d:" % hi), url
+    print(json.dumps({"entries": [{"id": "realvideo%02d" % i, "title": "Result %d" % i, "channel": "Chan", "channel_id": "UCabc", "duration": 61.0, "view_count": 5}
+                                   for i in range(lo - 1, lo + 1)] + [{"id": "short", "title": "not a video id"}, None]})); sys.exit(0)
 if "--write-comments" in a:
-    assert "max_comments=30" in a[a.index("--extractor-args") + 1]
+    ea = a[a.index("--extractor-args") + 1]
+    if "max_comments=60" in ea:   # page 2 asks for the first 60
+        print(json.dumps({"id": vid, "comments": [{"author": "@p%d" % i, "text": "c%d" % i, "like_count": 1} for i in range(45)]})); sys.exit(0)
+    assert "max_comments=30" in ea
     print(json.dumps({"id": vid, "comments": [{"author": "@someone", "text": "x" * 900, "like_count": 4, "_time_text": "2 days ago"},
-                                              {"author": "@other", "text": "second", "like_count": None}, {"author": "@empty", "text": ""}, None]})); sys.exit(0)
+                                              {"author": "@other", "text": "second", "like_count": None}, {"author": "@empty", "text": ""}, None]
+                                             + [{"author": "@f%d" % i, "text": "fill %d" % i} for i in range(30)]})); sys.exit(0)
 if "-J" in a:
     if vid == "onlyimages1" and "--ignore-no-formats-error" not in a:
         sys.stderr.write("ERROR: [youtube] onlyimages1: Requested format is not available\\n"); sys.exit(1)
@@ -91,18 +103,30 @@ def stub_phase():
             except Exception:
                 time.sleep(0.2)
         code, res = js("/search?q=x")
-        ok(code == 200 and [r["id"] for r in res] == ["realvideo00", "realvideo01"] and res[0]["author"] == "Chan" and res[0]["seconds"] == 61,
-           "search through yt-dlp, junk entries dropped")
+        ok(code == 200 and [r["id"] for r in res] == ["realvideo00", "realvideo01"] and res[0]["author"] == "Chan" and res[0]["seconds"] == 61
+           and res[0]["channel_id"] == "UCabc", "search through yt-dlp, junk entries dropped")
+        code, res = js("/search?q=x&page=3")
+        ok(code == 200 and [r["id"] for r in res] == ["realvideo30", "realvideo31"], "search page 3 asks for items 31-45")
+        code, ch = js("/channel?id=UCxxxxxxxxxxxxxxxxxxxxxx&page=2")
+        ok(code == 200 and ch[0]["id"] == "chanvidU016" and len(ch) == 5, "channel by id, page 2")
+        code, ch = js("/channel?id=@some.handle")
+        ok(code == 200 and ch[0]["id"] == "chanvidH001", "channel by handle")
+        ok(js("/channel?id=../x")[0] == 400, "bad channel id refused")
         code, d = js("/info?id=realvideo00")
         ok(code == 200 and d["title"] == "Real title" and d["author"] == "Up" and d["published"] == "2026-01-02" and len(d["description"]) == 1500,
            "info through yt-dlp")
         ok(js("/info?id=onlyimages1")[0] == 200, "details still load when YouTube offers no formats")
         code, pop = js("/popular")
-        ok(code == 200 and [p["id"] for p in pop] == ["popvideo000", "popvideo001", "popvideo002"] and pop[0]["author"] == "Up",
+        ok(code == 200 and pop[0]["id"] == "popvideo001" and len(pop) == 15 and pop[0]["author"] == "Up",
            "popular from YouTube's charts through yt-dlp")
+        code, pop2 = js("/popular?page=2")
+        ok(code == 200 and pop2[0]["id"] == "popvideo016" and len(pop2) == 5, "popular page 2 from the same chart")
         code, cm = js("/comments?id=realvideo00")
-        ok(code == 200 and len(cm) == 2 and cm[0] == {"author": "someone", "text": "x" * 600, "likes": 4, "when": "2 days ago"}
+        ok(code == 200 and len(cm) == 30 and cm[0] == {"author": "someone", "text": "x" * 600, "likes": 4, "when": "2 days ago"}
            and cm[1]["likes"] == 0 and cm[1]["when"] == "", "comments through yt-dlp, trimmed and cleaned")
+        code, cm2 = js("/comments?id=realvideo00&page=2")
+        ok(code == 200 and len(cm2) == 15 and cm2[0]["author"] == "p30", "comments page 2 is the slice after page 1")
+        ok(js("/comments?id=realvideo00&page=3")[1] == [], "comments past the end are empty")
         def wait(vid, key):
             t0 = time.time()
             while time.time() - t0 < 60:
@@ -185,13 +209,16 @@ def main():
         ok(code == 200 and len(res) == 3 and res[0]["id"] == "demo0000001" and res[0]["seconds"] == 12, "search")
         ok(js("/search?q=")[0] == 400, "empty search refused")
         code, pop = js("/popular")
-        ok(code == 200 and len(pop) == 4 and pop[0]["title"] == "Popular demo clip 1", "popular")
+        ok(code == 200 and len(pop) == 3 and pop[0]["title"] == "Popular demo clip 1", "popular")
+        ok(len(js("/popular?page=2")[1]) == 3 and js("/popular?page=4")[1] == [], "popular pages, then empty")
         vid = res[0]["id"]
         code, d = js("/info?id=" + vid)
         ok(code == 200 and d["title"] == "Demo clip 1" and d["seconds"] == 12 and "description" in d, "info")
         ok(js("/info?id=../../etc")[0] == 400, "bad id refused")
         code, cm = js("/comments?id=" + vid)
-        ok(code == 200 and len(cm) == 3 and cm[0]["author"] == "Viewer 1" and "likes" in cm[0], "comments")
+        ok(code == 200 and len(cm) == 30 and cm[0]["author"] == "Viewer 1" and "likes" in cm[0], "comments")
+        ok(len(js("/comments?id=%s&page=3" % vid)[1]) == 10, "comments last page")
+        ok(len(js("/channel?id=UCdemodemodemodemodemo00")[1]) == 3, "channel (demo)")
         ok(js("/comments?id=nope")[0] == 400, "comments need a video id")
 
         for w, want in ((320, 320), (120, 120), (9999, 320)):

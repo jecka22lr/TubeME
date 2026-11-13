@@ -5,6 +5,12 @@ YouTube client for J2ME (MIDP 2.0 / CLDC 1.1). Early: 0.1.0 has not been confirm
 Uses the same kinds of servers as [notPipe](https://github.com/gohoski/notPipe): YtAPILegacy, yt2009 and
 Invidious, picked at random from a shared list and swapped out when one fails.
 
+## Features
+
+Search, Popular, open by ID or link, related videos, the uploader's channel and comments, all with
+"More results..." to load the next page. Optional thumbnails next to list entries (Settings).
+A Log screen that survives crashes.
+
 ## Playback
 
 | Mode | What it does | Auto picks it when |

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 and server 0.5.0
+
+- **More results**: search, Popular, related videos and channels end with "More results...", which
+  loads the next page into the same list. Later pages come from the server that gave the first,
+  since every kind of server pages differently
+- **More comments**: the comments screen has a "More" command while there are more to load
+- **Related videos** and **Channel** (the uploader's videos) in the video menu
+- **Thumbnails in lists**: Settings > "Thumbnails in lists" puts a small thumbnail next to each
+  result, as the phone's own list icon. Off by default (it is one request per row)
+- **Back goes back**: search > video > related > video > Back returns to the related list, then
+  to the first video, and so on
+- **More than one server again**: when the shared server list failed to load (no network at the
+  first start), the app knew only its one built-in server until the next start. It now retries
+  a minute later, and whenever it knows only that one
+- Server: `/search`, `/popular` and `/comments` take a page number, and there is a new `/channel`
+
 ## 0.2.4
 
 - Fixed the app freezing (and then refusing to start) when saving the Log, or saving anything, while

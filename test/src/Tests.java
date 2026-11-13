@@ -383,6 +383,66 @@ public class Tests {
         eq(((Video) sr.elementAt(0)).title, "Inv result", "and gets results from the next one");
         eq(stSaid.elementAt(0), "Asking 127.0.0.1:18081", "progress names the server");
 
+        // --- feeds: page 1 from any server, later pages from the same one ---
+        Api fo = new Api(); fo.legacy = new Vector(); fo.legacy.addElement(L); fo.own = OWN; fo.invidious.addElement(INV);
+        Feed fs = new Feed(Feed.SEARCH, "paged", "paged");
+        fo.open(fs);
+        eq(fs.kind, "T", "own server answers page 1"); eq(Integer.valueOf(fs.items.size()), Integer.valueOf(15), "15 a page");
+        ok(!fs.end, "more to come");
+        eq(((Video) fs.items.elementAt(0)).channel, "UCminemineminemineminem0", "channel id carried");
+        eq(Integer.valueOf(fo.more(fs)), Integer.valueOf(15), "page 2"); eq(((Video) fs.items.elementAt(15)).title, "Own p2 #0", "page 2 content");
+        fo.more(fs); eq(Integer.valueOf(fo.more(fs)), Integer.valueOf(0), "past the end"); ok(fs.end, "end reached");
+        eq(Integer.valueOf(fs.items.size()), Integer.valueOf(45), "three pages in total");
+        // YtAPILegacy has no pages: it is asked for more and the repeats are dropped
+        Api fl = new Api(); fl.legacy = new Vector(); fl.legacy.addElement(L);
+        Feed fls = new Feed(Feed.SEARCH, "paged", "paged");
+        fl.open(fls); eq(Integer.valueOf(fls.items.size()), Integer.valueOf(15), "legacy page 1");
+        eq(Integer.valueOf(fl.more(fls)), Integer.valueOf(15), "legacy page 2 only new entries");
+        eq(Integer.valueOf(fl.more(fls)), Integer.valueOf(10), "legacy page 3 partial"); fl.more(fls); ok(fls.end, "legacy end");
+        eq(((Video) fls.items.elementAt(39)).id, "legpage0039", "no repeats, in order");
+        // Invidious pages by number for search
+        Api fi = new Api(); fi.legacy = new Vector(); fi.invidious.addElement(INV);
+        Feed fis = new Feed(Feed.SEARCH, "paged", "paged");
+        fi.open(fis); fi.more(fis); eq(Integer.valueOf(fis.items.size()), Integer.valueOf(20), "invidious two pages");
+        fi.more(fis); ok(fis.end, "invidious end");
+        // related: own server has none, so it goes to YtAPILegacy (offset paging)
+        Feed fr = new Feed(Feed.RELATED, "abcDEF_-001", "Related");
+        fo.open(fr); eq(fr.kind, "L", "related skips own server"); eq(((Video) fr.items.elementAt(0)).id, "legrel00000", "legacy related");
+        fo.more(fr); eq(((Video) fr.items.elementAt(15)).id, "legrel00015", "related page 2 by offset");
+        fo.more(fr); ok(fr.end, "related end");
+        Feed fir = new Feed(Feed.RELATED, "abcDEF_-001", "Related");
+        fi.open(fir); eq(Integer.valueOf(fir.items.size()), Integer.valueOf(4), "invidious related"); ok(fir.end, "invidious related is one page");
+        // channels
+        Feed fc = new Feed(Feed.CHANNEL, "UCminemineminemineminem0", "Mine");
+        fo.open(fc); eq(fc.kind, "T", "own channel"); fo.more(fc); eq(Integer.valueOf(fc.items.size()), Integer.valueOf(30), "own channel 2 pages");
+        eq(((Video) fc.items.elementAt(0)).channel, "UCminemineminemineminem0", "channel videos know their channel");
+        Feed flc = new Feed(Feed.CHANNEL, "@some.one", "Someone");
+        fl.open(flc); eq(((Video) flc.items.elementAt(0)).id, "legchan0000", "legacy channel by handle");
+        fl.more(flc); eq(Integer.valueOf(flc.items.size()), Integer.valueOf(20), "legacy channel more"); fl.more(flc); ok(flc.end, "legacy channel end");
+        Feed fic = new Feed(Feed.CHANNEL, "UCinvinvinvinvinvinvinv0", "I");
+        fi.open(fic); ok(!fic.end, "invidious channel continues"); fi.more(fic); eq(((Video) fic.items.elementAt(5)).id, "invchan0200", "continuation token used");
+        ok(fic.end, "no token, no more");
+        Feed fih = new Feed(Feed.CHANNEL, "@handle", "h");
+        threw = false; try { fi.open(fih); } catch (Exception e) { threw = e.getMessage().indexOf("None of the servers") >= 0; }
+        ok(threw, "a handle can't go to Invidious");
+        // comments
+        Feed fco = new Feed(Feed.COMMENTS, "abcDEF_-001", "Comments");
+        fo.open(fco); eq(Integer.valueOf(fco.items.size()), Integer.valueOf(2), "own comments page 1");
+        fo.more(fco); eq(((String[]) fco.items.elementAt(2))[1], "page two", "own comments page 2"); fo.more(fco); ok(fco.end, "own comments end");
+        Feed fci = new Feed(Feed.COMMENTS, "abcDEF_-001", "Comments");
+        fi.open(fci); ok(!fci.end, "invidious comments continue"); fi.more(fci);
+        eq(((String[]) fci.items.elementAt(1))[2], "3 likes", "invidious comments page 2"); ok(fci.end, "invidious comments end");
+        Feed fcl = new Feed(Feed.COMMENTS, "abcDEF_-001", "Comments");
+        fl.open(fcl); ok(fcl.end, "legacy comments are one page");
+        // channel references
+        eq(Api.channelRef("https://www.youtube.com/@Some.Name-1/videos"), "@Some.Name-1", "handle from a URL");
+        eq(Api.channelRef("UCabcdefghijklmnopqrstuv"), "UCabcdefghijklmnopqrstuv", "UC id");
+        eq(Api.channelRef("/channel/UCabcdefghijklmnopqrstuv"), "UCabcdefghijklmnopqrstuv", "UC id from a path");
+        eq(Api.channelRef("UCshort"), "", "not an id"); eq(Api.channelRef(null), "", "null");
+        eq(Util.percentDecode("%40name"), "@name", "percent decode");
+        eq(((Video) fo.search("x").elementAt(0)).channel, "UCminemineminemineminem0", "search results carry the channel");
+        eq(((Video) fl.search("gatos").elementAt(0)).channel, "UCcanalcanalcanalcanal00", "legacy results carry the channel");
+
         // --- fastest server first ---
         Api rk = new Api(); rk.legacy = new Vector(); rk.legacy.addElement(L); rk.legacy.addElement(GONE);
         rk.yt2009.addElement(Y); rk.yt2009.addElement(YBAD); rk.invidious.addElement(INV);

@@ -9,7 +9,7 @@ import java.util.Vector;
  * fallback). Servers are picked at random and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.2.4";
+    static final String VERSION = "0.3.0";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
@@ -513,6 +513,7 @@ final class Api {
 
     // ---- metadata ----
 
+    /** Kept for the tests; the app uses feeds. */
     Vector search(String q) throws Exception {
         return list("/get_search_videos.php?query=" + Util.urlEncode(q),
                 "/api/v1/search?type=video&fields=videoId,title,author,lengthSeconds,viewCount&q=" + Util.urlEncode(q),
@@ -576,7 +577,7 @@ final class Api {
             try {
                 String path = leg ? "/get-ytvideo-info.php?video_id=" + id
                         : mine ? "/info?id=" + id
-                        : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,lengthSeconds,viewCount,"
+                        : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,authorId,lengthSeconds,viewCount,"
                         + "description,publishedText,formatStreams";
                 say(mine ? "Asking your server" : "Asking " + host(e[1]));
                 o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
@@ -662,6 +663,199 @@ final class Api {
 
     static final int MAX_COMMENTS = 30;
 
+    /** A channel reference worth keeping: a UC... id or an @handle (a handle URL is cut down to the handle). */
+    static String channelRef(String s) {
+        if (s == null) return "";
+        s = s.trim();
+        int at = s.lastIndexOf('@');
+        if (at >= 0) {
+            String h = s.substring(at);
+            int end = 1;
+            while (end < h.length()) {
+                char c = h.charAt(end);
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') end++;
+                else break;
+            }
+            return end > 1 ? h.substring(0, end) : "";
+        }
+        int uc = s.indexOf("UC");
+        if (uc >= 0 && s.length() >= uc + 24) {
+            String id = s.substring(uc, uc + 24);
+            for (int i = 0; i < id.length(); i++) {
+                char c = id.charAt(i);
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return "";
+            }
+            return id;
+        }
+        return "";
+    }
+
+    // ---- lists that continue: search, popular, related, channel, comments ----
+
+    static final int PAGE = 15;
+
+    /**
+     * The address for one page of a feed on one kind of server, or null when
+     * that kind can't give it. Pages count from 1.
+     */
+    private static String feedPath(Feed f, String kind, int page, String token) {
+        String q = Util.urlEncode(f.arg);
+        boolean uc = f.arg.startsWith("UC");
+        if (kind.equals("T")) {
+            switch (f.what) {
+                case Feed.SEARCH: return "/search?q=" + q + "&page=" + page;
+                case Feed.POPULAR: return "/popular?page=" + page;
+                case Feed.CHANNEL: return "/channel?id=" + q + "&page=" + page;
+                case Feed.COMMENTS: return "/comments?id=" + q + "&page=" + page;
+                default: return null;
+            }
+        }
+        if (kind.equals("L")) {
+            // YtAPILegacy has no page numbers: ask for more and drop what was already shown
+            int count = page * PAGE;
+            switch (f.what) {
+                case Feed.SEARCH: return "/get_search_videos.php?query=" + q + "&count=" + count;
+                case Feed.POPULAR: return "/get_top_videos.php?count=" + count;
+                case Feed.RELATED: return "/get_related_videos.php?video_id=" + q + "&offset=" + ((page - 1) * PAGE) + "&limit=" + PAGE;
+                case Feed.CHANNEL: return uc ? "/get_author_videos_by_id.php?channel_id=" + q + "&count=" + count
+                        : "/get_author_videos.php?author=" + q + "&count=" + count;
+                case Feed.COMMENTS: return page == 1 ? "/get-ytvideo-info.php?video_id=" + q : null;
+                default: return null;
+            }
+        }
+        String fields = "fields=videoId,title,author,authorId,lengthSeconds,viewCount";
+        switch (f.what) {
+            case Feed.SEARCH: return "/api/v1/search?type=video&" + fields + "&q=" + q + "&page=" + page;
+            case Feed.POPULAR: return page == 1 ? "/api/v1/popular?" + fields : null;
+            case Feed.RELATED: return page == 1 ? "/api/v1/videos/" + q + "?fields=recommendedVideos" : null;
+            case Feed.CHANNEL:
+                if (!uc) return null;
+                if (page > 1 && token == null) return null;
+                return "/api/v1/channels/" + q + "/videos" + (token != null ? "?continuation=" + Util.urlEncode(token) : "");
+            case Feed.COMMENTS:
+                if (page > 1 && token == null) return null;
+                return "/api/v1/comments/" + q + "?fields=comments,continuation" + (token != null ? "&continuation=" + Util.urlEncode(token) : "");
+            default: return null;
+        }
+    }
+
+    /** Pulls the entries out of one answer and adds the new ones to the feed. Returns how many were new. */
+    private int takePage(Feed f, String kind, String base, Object o) throws Exception {
+        Vector in;
+        if (o instanceof Vector) {
+            in = (Vector) o;
+        } else if (o instanceof Hashtable) {
+            String key = f.comments() ? "comments" : f.what == Feed.RELATED ? "recommendedVideos" : "videos";
+            if (!((Hashtable) o).containsKey(key)) throw new Exception(errorOf(o));
+            in = Json.arr(o, key);
+            String tok = Json.str(o, "continuation");
+            f.token = tok.length() > 0 ? tok : null;
+        } else {
+            throw new Exception("Bad answer");
+        }
+        int added = 0;
+        for (int i = 0; i < in.size(); i++) {
+            Object e = in.elementAt(i);
+            Object item;
+            String key;
+            if (f.comments()) {
+                String[] row = commentRow(kind, e);
+                if (row == null) continue;
+                item = row;
+                key = row[0] + "\n" + row[1];
+            } else {
+                Video v = parse(kind, e, base);
+                if (v == null || v.id == null || v.id.length() == 0) continue;
+                if (f.what == Feed.CHANNEL && v.channel.length() == 0) v.channel = f.arg;
+                item = v;
+                key = v.id;
+            }
+            if (f.seen.containsKey(key)) continue;
+            f.seen.put(key, "");
+            f.items.addElement(item);
+            added++;
+        }
+        return added;
+    }
+
+    private static String[] commentRow(String kind, Object c) {
+        boolean mine = kind.equals("T"), leg = kind.equals("L");
+        String text = Json.str(c, mine || leg ? "text" : "content");
+        if (text.length() == 0) return null;
+        if (text.length() > 500) text = text.substring(0, 500) + "...";
+        String likes = Json.str(c, mine ? "likes" : "likeCount");
+        String when = Json.str(c, mine ? "when" : leg ? "published_at" : "publishedText");
+        String extra = (likes.length() > 0 && !likes.equals("0")) ? likes + (likes.equals("1") ? " like" : " likes") : "";
+        if (when.length() > 0) extra = extra.length() > 0 ? extra + ", " + when : when;
+        return new String[] { Json.str(c, "author"), text, extra };
+    }
+
+    /** Some kinds of server can't page a given list at all after page 1. */
+    private static boolean onePageOnly(Feed f, String kind) {
+        return feedPath(f, kind, 2, "x") == null;
+    }
+
+    /** Loads page 1 from the first server that has it. */
+    void open(Feed f) throws Exception {
+        Vector order = metaOrder();
+        Exception last = null;
+        boolean anyTried = false;
+        for (int k = 0; k < order.size(); k++) {
+            String[] e = (String[]) order.elementAt(k);
+            String path = feedPath(f, e[0], 1, null);
+            if (path == null) continue;
+            anyTried = true;
+            say(e[0].equals("T") ? "Asking your server" : "Asking " + host(e[1]));
+            try {
+                Object o = Json.parse(Net.getText(e[1] + path, f.what == Feed.RELATED && e[0].equals("L") ? 60000 : metaTimeout(e[0])));
+                f.items.removeAllElements();
+                f.seen.clear();
+                f.token = null;
+                int n = takePage(f, e[0], e[1], o);
+                f.kind = e[0];
+                f.base = e[1];
+                f.page = 1;
+                f.end = n == 0 || onePageOnly(f, e[0]) || (e[0].equals("I") && (f.what == Feed.CHANNEL || f.comments()) && f.token == null);
+                if (e[0].equals("L") && f.what != Feed.COMMENTS) lastGood = e[1];
+                markGood(e[1]);
+                metaBad.remove(e[1]);
+                // a server with an empty answer may just not know this list: try the next one too
+                if (n == 0 && f.what != Feed.SEARCH && k + 1 < order.size()) {
+                    last = new Exception("nothing there");
+                    continue;
+                }
+                return;
+            } catch (Exception ex) {
+                Log.err("feed " + f.what + " " + e[1], ex);
+                String m = ex.getMessage();
+                boolean notHere = m != null && m.startsWith("HTTP 404");
+                say(host(e[1]) + (notHere ? ": doesn't have this list" : ": " + msg(ex)));
+                if (!notHere && ex instanceof java.io.IOException) failed(e[1], ex);
+                last = ex;
+            }
+        }
+        if (f.kind != null) return; // an empty but valid answer was the best there was
+        if (!anyTried) throw new Exception("None of the servers can show this list");
+        throw new Exception("No server answered" + (last == null ? "" : ": " + msg(last)));
+    }
+
+    /** Loads the next page from the server page 1 came from. Returns how many entries were added. */
+    int more(Feed f) throws Exception {
+        if (f.end || f.kind == null) return 0;
+        int page = f.page + 1;
+        String path = feedPath(f, f.kind, page, f.token);
+        if (path == null) {
+            f.end = true;
+            return 0;
+        }
+        say(f.kind.equals("T") ? "Asking your server" : "Asking " + host(f.base));
+        Object o = Json.parse(Net.getText(f.base + path, f.what == Feed.RELATED && f.kind.equals("L") ? 60000 : metaTimeout(f.kind)));
+        int n = takePage(f, f.kind, f.base, o);
+        f.page = page;
+        if (n == 0 || (f.kind.equals("I") && (f.what == Feed.CHANNEL || f.comments()) && f.token == null)) f.end = true;
+        return n;
+    }
+
     private static Video fromOwn(Object o, String base) {
         if (!(o instanceof Hashtable)) return null;
         Video v = new Video();
@@ -673,6 +867,7 @@ final class Api {
         String views = Json.str(o, "views");
         v.views = views.equals("0") ? "" : views;
         v.thumb = base + "/thumb?id=" + v.id;
+        v.channel = channelRef(Json.str(o, "channel_id"));
         return v;
     }
 
@@ -696,6 +891,8 @@ final class Api {
         v.views = Json.str(o, "views");
         v.thumb = base + "/thumbnail/" + v.id;
         v.source = base;
+        v.channel = channelRef(Json.str(o, "channel_id"));
+        if (v.channel.length() == 0) v.channel = channelRef(Util.percentDecode(Json.str(o, "channel_custom_url")));
         return v;
     }
 
@@ -710,6 +907,7 @@ final class Api {
         v.duration = len > 0 ? Util.duration(len) : "";
         v.views = Json.str(o, "viewCount");
         v.thumb = base + "/vi/" + id + "/default.jpg";
+        v.channel = channelRef(Json.str(o, "authorId"));
         return v;
     }
 
