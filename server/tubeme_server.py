@@ -940,7 +940,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 try:
                     self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     return
                 left -= len(chunk)
 
@@ -1053,7 +1053,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
                 return
             self.fail(404, "not found")
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception as e:
             msg = short(e)

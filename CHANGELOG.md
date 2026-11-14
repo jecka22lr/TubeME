@@ -20,6 +20,9 @@
   instead of one by one (dead ones used to cost 20 s each), and a refusal no longer triggers a
   pointless yt-dlp update first. yt-dlp fetches in 4 parallel pieces. The server window shows how
   long each fetch took
+- Server on Windows: clicking inside the server window no longer freezes it (Windows pauses any
+  program printing to a console in "QuickEdit" selection mode until a key is pressed). Each
+  yt-dlp call logs how long it took
 - Server: every request is logged (`GET /search?q=... -> 200 in 3.1 s`), so you can see the
   phone reaching it
 - End-to-end test in CI: the phone's own code against a real server and real YouTube, every
