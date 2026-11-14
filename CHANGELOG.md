@@ -1,5 +1,15 @@
 # Changelog
 
+## Next
+
+- **Downloads continue where they stopped**: a dropped or stalled connection (no data for 30 s)
+  is picked up from the last byte, up to 5 times in a row. If it still fails, the part stays on
+  the memory card as `.part` and the next Save of the same video and quality continues it.
+  Works with TubeME and yt2009 servers (their files are fixed); YtAPILegacy converts on the fly,
+  so its downloads still start over. Saved files are now named `TubeME_<id>_<quality>.<ext>`
+- **Sound only**: a new "Sound only (MP3)" quality, 96 kbit/s stereo, about a tenth of the size
+  of MPEG-4 360p. From TubeME servers (server 0.7.0)
+
 ## 0.4.1 and server 0.6.1
 
 - **Your server is never written off**: if it failed once (a check at start-up before Wi-Fi was

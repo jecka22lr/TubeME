@@ -560,7 +560,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (api.own.length() > 0) f.append(new StringItem("My server", api.own + " (" + api.status(Util.cleanBase(api.own)) + ")"));
         f.append(new StringItem("Servers", api.legacy.size() + " YtAPILegacy, " + api.yt2009.size() + " yt2009, "
                 + api.invidious.size() + " Invidious"));
-        if (qIds.length < Api.Q_NAMES.length) {
+        if (!contains(qIds, Api.Q_H264)) {
             f.append(new StringItem("H.264 360p", "not offered: this platform is listed as decoding H.264 only up to 320x240. "
                     + "Settings > Offer every quality brings it back"));
         }
@@ -568,6 +568,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         f.addCommand(cBack);
         f.setCommandListener(this);
         show(f);
+    }
+
+    private static boolean contains(int[] a, int x) {
+        for (int i = 0; i < a.length; i++) if (a[i] == x) return true;
+        return false;
     }
 
     private void showServers() {
@@ -1039,71 +1044,18 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         }
         if (c == null) throw new Exception("Download failed: " + (last == null ? "no servers" : Api.msg(last)));
 
-        String path = folder + "TubeME_" + v.id + "." + s.ext;
-        InputStream in = null;
-        OutputStream out = null;
-        long done = 0;
-        boolean ok = false, created = false;
-        try {
-            long len = c.getLength();
-            Log.add("dl connected len=" + len + " type=" + c.getType() + " -> " + path);
-            say(len > 0 ? "Downloading " + (len / 1024) + " KB" : "Downloading (size unknown)");
-            int step = 0;
-            out = Files.openOut(path);
-            created = true;
-            in = c.openInputStream();
-            Log.add("dl streams open");
-            byte[] buf = new byte[4096];
-            int n;
-            long mark = 0;
-            boolean first = true;
-            long logMark = 0;
-            while ((n = in.read(buf)) > 0) {
-                if (g != gen) return;
-                if (first) {
-                    first = false;
-                    Log.add("dl first bytes");
-                } else if (done - logMark >= 262144) {
-                    logMark = done;
-                    Log.add("dl " + (done / 1024) + "K");
-                }
-                out.write(buf, 0, n);
-                done += n;
-                if (done - mark >= 32768) {
-                    mark = done;
-                    if (len > 0) {
-                        // a new line every 5%
-                        int pct = (int) (done * 100 / len) / 5;
-                        if (pct > step) {
-                            step = pct;
-                            say("Downloading " + (pct * 5) + "%");
-                        }
-                    } else {
-                        // no size from the server: a new line every 256 KB
-                        int kb = (int) (done / 262144);
-                        if (kb > step) {
-                            step = kb;
-                            say("Downloading " + (done / 1024) + " KB");
-                        }
-                    }
-                }
+        String path = folder + "TubeME_" + v.id + "_" + Api.Q_KEYS[settings.quality] + "." + s.ext;
+        final int myGen = g;
+        long done = Download.save(s.url, c, s.probe, path, new Download.Watch() {
+            public void say(String line) {
+                TubeMIDlet.this.say(line);
             }
-            Log.add("dl done " + done + "b");
-            if (done == 0) throw new Exception("Server sent an empty video");
-            // a dropped connection ends the read loop just like the end of the file does
-            if (len > 0 && done < len) {
-                throw new Exception("Download stopped at " + (done / 1024) + " of " + (len / 1024) + " KB");
+
+            public boolean cancelled() {
+                return myGen != gen;
             }
-            say("Download finished");
-            ok = true;
-        } finally {
-            try { if (in != null) in.close(); } catch (Throwable t) {}
-            try { if (out != null) out.close(); } catch (Throwable t) {}
-            Files.closeOut();
-            Net.close(c);
-            // only remove what this attempt wrote, never an earlier complete download
-            if (!ok && created) Files.delete(path);
-        }
+        });
+        if (done < 0) return;
         if (g != gen) return;
         savedPath = path;
         if (thenPlay) {

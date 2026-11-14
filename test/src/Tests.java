@@ -52,14 +52,14 @@ public class Tests {
         ok(!Util.h264OnlyQvga(null), "no platform: no note");
 
         int[] qc6 = Api.qualities(c6);
-        eq(Integer.valueOf(qc6.length), Integer.valueOf(7), "S60 5th quality count");
+        eq(Integer.valueOf(qc6.length), Integer.valueOf(8), "S60 5th quality count");
         ok(qc6[2] == Api.Q_MP4V_240 && qc6[3] == Api.Q_H264_240, "240p offered on S60 5th");
         for (int i = 0; i < qc6.length; i++) ok(qc6[i] != Api.Q_H264, "H.264 360p hidden on S60 5th");
         ok(qc6[1] == Api.Q_H264_144, "H.264 144p still offered on S60 5th");
-        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(8), "all offered on Symbian^3");
-        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(8), "all offered when platform unknown");
-        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(8), "a name per quality id");
-        eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(8), "a server key per quality id");
+        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(9), "all offered on Symbian^3");
+        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(9), "all offered when platform unknown");
+        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(9), "a name per quality id");
+        eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(9), "a server key per quality id");
         eq(Api.Q_KEYS[Api.Q_MP4V_240], "mp4v-240", "240p key"); eq(Api.Q_KEYS[Api.Q_H263_144], "h263-144", "144p key");
 
         eq(Log.symbian("-191"), " (host unreachable)", "symbian error explained");
@@ -532,6 +532,34 @@ public class Tests {
         Feed pf = new Feed(Feed.SEARCH, "x", "x"); pin2.open(pf); eq(pf.kind, "L", "falls back when own is off");
         pin2.own = OWN;
         Feed pf2 = new Feed(Feed.SEARCH, "x", "x"); pin2.open(pf2); eq(pf2.kind, "T", "own server asked first again");
+
+        // --- downloads that drop or stall pick up where they stopped ---
+        {
+            new java.io.File("/tmp/tubefs/E:").mkdirs();
+            String dd = Files.pickDir("");
+            final String OW = "http://127.0.0.1:18088";
+            Download.STALL = 1500; Download.RETRY_PAUSE = 50;
+            final Vector dsaid = new Vector();
+            Download.Watch w = new Download.Watch() { public void say(String l) { dsaid.addElement(l); } public boolean cancelled() { return false; } };
+            long got = Download.save(OW + "/flaky.mp4", null, true, dd + "flaky.mp4", w);
+            eq(Long.valueOf(got), Long.valueOf(76800), "dropped connection: resumed to the full size");
+            byte[] fb = java.nio.file.Files.readAllBytes(new java.io.File("/tmp/tubefs/E:/flaky.mp4").toPath());
+            ok(fb.length == 76800 && fb[30000] == (byte) (30000 % 256) && fb[76799] == (byte) (76799 % 256), "resumed file is byte for byte right");
+            ok(!new java.io.File("/tmp/tubefs/E:/flaky.mp4.part").exists(), "no .part left after finishing");
+            boolean saidCont = false; for (int i = 0; i < dsaid.size(); i++) saidCont |= ((String) dsaid.elementAt(i)).startsWith("Connection lost at 29 KB");
+            ok(saidCont, "says it lost the connection and continues");
+            eq(Long.valueOf(Download.save(OW + "/stall.mp4", null, true, dd + "stall.mp4", w)), Long.valueOf(76800), "stalled connection: noticed and resumed");
+            threw = false; try { Download.save(OW + "/plain.mp4", null, false, dd + "plain.mp4", w); } catch (Exception e) { threw = true; }
+            ok(threw && !new java.io.File("/tmp/tubefs/E:/plain.mp4.part").exists() && !new java.io.File("/tmp/tubefs/E:/plain.mp4").exists(), "a conversion stream that drops isn't kept");
+            Download.RETRIES = 0;
+            String msg = "";
+            try { Download.save(OW + "/flaky.mp4", null, true, dd + "later.mp4", w); } catch (Exception e) { msg = e.getMessage(); }
+            ok(msg.indexOf("Save again to continue") > 0 && new java.io.File("/tmp/tubefs/E:/later.mp4.part").length() == 30000, "gave up: the part is kept: " + msg);
+            Download.RETRIES = 5;
+            eq(Long.valueOf(Download.save(OW + "/flaky.mp4", null, true, dd + "later.mp4", w)), Long.valueOf(76800), "next Save continues the kept part");
+            java.nio.file.Files.write(new java.io.File("/tmp/tubefs/E:/full.mp4.part").toPath(), new byte[76800]);
+            eq(Long.valueOf(Download.save(OW + "/flaky.mp4", null, true, dd + "full.mp4", w)), Long.valueOf(76800), "a kept part that was already whole just gets its name");
+        }
 
         // --- files: folder pick, .ram, download to file ---
         new java.io.File("/tmp/tubefs/E:").mkdirs();

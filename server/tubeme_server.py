@@ -45,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "0.6.1"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
+FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp|mp3)$")
 
 # Every quality the app knows by name. "box" is the largest picture; "fixed" means the codec only
 # allows that exact size (H.263), so the picture is padded with black bars instead of resized freely.
@@ -67,8 +67,10 @@ PROFILES = {
     "mp4v-360": dict(ext="mp4", box=(640, 360), audio="high", fps=25,
                      video=["-c:v", "mpeg4", "-vtag", "mp4v", "-b:v", "750k", "-g", "75", "-bf", "0"]),
     "h264-360": dict(ext="mp4", copy=True),
+    # sound only: MP3 plays on nearly every phone with a music player, and is a tenth of the size
+    "mp3": dict(ext="mp3", audio_only=True, need="libmp3lame"),
 }
-ORDER = ["h263-144", "h264-144", "mp4v-240", "h264-240", "h263-288", "mp4v-270", "mp4v-360", "h264-360"]
+ORDER = ["h263-144", "h264-144", "mp4v-240", "h264-240", "h263-288", "mp4v-270", "mp4v-360", "h264-360", "mp3"]
 
 
 def log(*a):
@@ -352,7 +354,7 @@ class Server:
         self.qualities = []
         for key in ORDER:
             p = PROFILES[key]
-            need = None if p.get("copy") else p["video"][1]
+            need = p.get("need") or (None if p.get("copy") else p["video"][1])
             if need is None or re.search(r"\s%s\s" % re.escape(need), encoders):
                 self.qualities.append(key)
             else:
@@ -762,7 +764,9 @@ class Server:
                 job["state"] = "converting"
                 dur, sw, sh = self.probe(src)
                 cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src]
-                if p.get("copy") and self.codecs(src) == ("h264", "aac"):
+                if p.get("audio_only"):
+                    cmd += ["-vn", "-c:a", "libmp3lame", "-b:a", "96k", "-ar", "44100", "-ac", "2"]
+                elif p.get("copy") and self.codecs(src) == ("h264", "aac"):
                     cmd += ["-c", "copy"]
                 elif p.get("copy"):
                     # YouTube had no ready-made H.264 file for this one: make an equivalent
@@ -777,7 +781,9 @@ class Server:
                     else:
                         vf = "scale=%d:%d" % fit(sw, sh, bw, bh)
                     cmd += ["-vf", vf + ",format=yuv420p", "-r", str(p["fps"])] + p["video"] + self.audio(p["audio"])
-                cmd += ["-movflags", "+faststart", "-f", p["ext"], "-progress", "pipe:1", tmp]
+                if not p.get("audio_only"):
+                    cmd += ["-movflags", "+faststart"]
+                cmd += ["-f", p["ext"], "-progress", "pipe:1", tmp]
                 log("converting", vid, "to", key)
                 t0 = time.time()
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1032,7 +1038,8 @@ class Handler(BaseHTTPRequestHandler):
                 path = os.path.join(s.out_dir, name)
                 if not FILE_RE.match(name) or not os.path.isfile(path):
                     return self.fail(404, "no such file (it may have been cleared from the cache; press Play again)")
-                return self.send_file(path, "video/3gpp" if name.endswith(".3gp") else "video/mp4")
+                return self.send_file(path, "video/3gpp" if name.endswith(".3gp") else
+                                      "audio/mpeg" if name.endswith(".mp3") else "video/mp4")
             if p == "/":
                 lim = s.limits
                 rules = ""

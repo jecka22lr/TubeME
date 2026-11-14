@@ -353,7 +353,8 @@ def main():
             "mp4v-360": ("mpeg4", 640, 352, "mp4"), "h264-360": ("h264", 640, 360, "mp4"),
         }
         saw_progress = False
-        for key in quals:
+        ok("mp3" in quals, "offers sound only (MP3)")
+        for key in [k for k in quals if k != "mp3"]:
             url = None
             t0 = time.time()
             while time.time() - t0 < 60:
@@ -376,6 +377,18 @@ def main():
                 ok("Baseline" in v.get("profile", ""), "%s is Baseline profile (%s)" % (key, v.get("profile")))
             ok(a["codec_name"] in ("aac", "amr_nb"), "%s has sound (%s)" % (key, a["codec_name"]))
         ok(saw_progress, "progress states were reported while converting")
+        t0 = time.time()
+        while time.time() - t0 < 60:
+            st = js("/prepare?id=%s&q=mp3" % vid)[1]
+            if st["state"] in ("ready", "error"): break
+            time.sleep(0.2)
+        ok(st["state"] == "ready" and st["url"].endswith(".mp3"), "mp3 ready: %s" % st)
+        code, h3, mp3 = get(st["url"])
+        ok(code == 200 and h3["Content-Type"] == "audio/mpeg", "mp3 served as audio/mpeg")
+        tmp = os.path.join(cache, "o.mp3"); open(tmp, "wb").write(mp3)
+        sts = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type", "-of", "json", tmp],
+                                        stdout=subprocess.PIPE).stdout)["streams"]
+        ok([x["codec_name"] for x in sts] == ["mp3"], "sound only, MP3: %s" % sts)
 
         # resuming / seeking
         code, h, part = get(url, {"Range": "bytes=100-199"})

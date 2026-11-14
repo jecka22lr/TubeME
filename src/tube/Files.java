@@ -30,6 +30,39 @@ final class Files {
         return outFc.openOutputStream();
     }
 
+    /** Opens an existing file for writing at its end. */
+    static OutputStream openAppend(String path) throws Exception {
+        closeOut();
+        FileConnection fc = open(path, Connector.READ_WRITE);
+        if (!fc.exists()) fc.create();
+        outFc = fc;
+        return fc.openOutputStream(fc.fileSize());
+    }
+
+    /** Size of a file, or -1 when it isn't there (or can't be read). */
+    static long size(String url) {
+        FileConnection fc = null;
+        try {
+            fc = open(url, Connector.READ);
+            return fc.exists() ? fc.fileSize() : -1;
+        } catch (Throwable t) {
+            return -1;
+        } finally {
+            try { if (fc != null) fc.close(); } catch (Throwable t) {}
+        }
+    }
+
+    /** Renames from to the name of to (same folder), replacing to if it exists. */
+    static void replace(String from, String to) throws Exception {
+        delete(to);
+        FileConnection fc = open(from, Connector.READ_WRITE);
+        try {
+            fc.rename(to.substring(to.lastIndexOf('/') + 1));
+        } finally {
+            fc.close();
+        }
+    }
+
     static void closeOut() {
         FileConnection fc = outFc;
         outFc = null;

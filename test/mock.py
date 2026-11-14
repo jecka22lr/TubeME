@@ -216,6 +216,22 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"state": "ready", "url": "/file/%s-%s.mp4" % (q["id"][0], key), "bytes": len(VIDEO)})
             if p.startswith("/file/"):
                 self.hit("own-file"); return self.send(200, VIDEO, "video/mp4")
+            if p in ("/flaky.mp4", "/stall.mp4", "/plain.mp4"):   # connections that drop or stall partway
+                rng = self.headers.get("Range")
+                start = int(rng.split("=")[1].split("-")[0]) if rng and p != "/plain.mp4" else 0
+                if start >= len(VIDEO):
+                    return self.send(416, b"", "text/plain")
+                body = VIDEO[start:]
+                self.send_response(206 if start else 200)
+                self.send_header("Content-Type", "video/mp4"); self.send_header("Content-Length", str(len(body)))
+                if start:
+                    self.hit("range"); self.send_header("Content-Range", "bytes %d-%d/%d" % (start, len(VIDEO) - 1, len(VIDEO)))
+                self.end_headers()
+                cut = 30000 if not start else len(body)
+                if p == "/plain.mp4": cut = 30000   # never finishes, never resumes
+                self.wfile.write(body[:cut]); self.wfile.flush()
+                if p == "/stall.mp4" and not start: time.sleep(5)
+                return
             return self.send(404, {"error": "not found"})
         if port == Y09HANG:  # a server whose conversion is stuck: answers far too late
             if p == "/health": return self.send(404, b"", "text/html")
@@ -258,7 +274,7 @@ def main():
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["pip-search", "pip-popular", "pip-streams", "pip-comments", "pub-tubeme", "pub-prepare", "own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["range", "pip-search", "pip-popular", "pip-streams", "pip-comments", "pub-tubeme", "pub-prepare", "own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

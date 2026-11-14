@@ -14,6 +14,10 @@ final class Net {
     private Net() {}
 
     private static HttpConnection raw(String url) throws IOException {
+        return raw(url, 0);
+    }
+
+    private static HttpConnection raw(String url, long from) throws IOException {
         HttpConnection c;
         synchronized (Util.OPENING) {
             c = (HttpConnection) Connector.open(url, Connector.READ, true);
@@ -21,6 +25,7 @@ final class Net {
         c.setRequestMethod(HttpConnection.GET);
         c.setRequestProperty("User-Agent", UA);
         c.setRequestProperty("Accept", "*/*");
+        if (from > 0) c.setRequestProperty("Range", "bytes=" + from + "-");
         return c;
     }
 
@@ -36,8 +41,15 @@ final class Net {
      * gives up when a server takes longer than timeoutMs to answer. Caller closes.
      */
     static HttpConnection open(String url, long timeoutMs) throws IOException {
+        return open(url, timeoutMs, 0);
+    }
+
+    /** As open(url, timeoutMs), asking for the bytes from offset from on (206 if the server can, 200 if not). */
+    static HttpConnection open(String url, long timeoutMs, long from) throws IOException {
         for (int hop = 0; hop < 6; hop++) {
-            Job j = runJob(2, url, timeoutMs);
+            Job j = new Job(2, url);
+            j.from = from;
+            runJob(j, timeoutMs);
             HttpConnection c = j.c;
             int code = ((Integer) j.result).intValue();
             if (code >= 200 && code < 300) return c;
@@ -199,6 +211,7 @@ final class Net {
         Object result;
         Throwable error;
         int max;
+        long from;
         volatile boolean done, abandoned;
 
         Job(int kind, String url) {
@@ -211,7 +224,7 @@ final class Net {
                 if (kind == 3) {
                     result = fetch(url, max, this);
                 } else {
-                    c = raw(url);
+                    c = raw(url, from);
                     result = kind == 1 ? (Object) redirectOf(c, url) : new Integer(c.getResponseCode());
                 }
             } catch (Throwable t) {

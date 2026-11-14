@@ -51,15 +51,17 @@ final class Api {
     static final int Q_MP4V_240 = 6;
     /** H.264 Baseline within 320x240. TubeME server only. */
     static final int Q_H264_240 = 7;
+    /** Sound only, MP3 96 kbit/s. TubeME servers only. */
+    static final int Q_AUDIO = 8;
 
     /** Indexed by quality id (ids are what settings store, so they never change). */
     static final String[] Q_NAMES = {
         "H.263 288p (3GP)", "MPEG-4 270p", "MPEG-4 360p", "H.264 360p", "H.264 144p", "H.263 144p (3GP)",
-        "MPEG-4 240p", "H.264 240p"
+        "MPEG-4 240p", "H.264 240p", "Sound only (MP3)"
     };
     /** What a TubeME server calls each quality. */
     static final String[] Q_KEYS = {
-        "h263-288", "mp4v-270", "mp4v-360", "h264-360", "h264-144", "h263-144", "mp4v-240", "h264-240"
+        "h263-288", "mp4v-270", "mp4v-360", "h264-360", "h264-144", "h263-144", "mp4v-240", "h264-240", "mp3"
     };
 
     /**
@@ -69,9 +71,9 @@ final class Api {
      */
     static int[] qualities(String platform) {
         if (Util.h264OnlyQvga(platform)) {
-            return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360 };
+            return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360, Q_AUDIO };
         }
-        return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264 };
+        return new int[] { Q_H263_144, Q_H264_144, Q_MP4V_240, Q_H264_240, Q_H263, Q_MP4V, Q_MP4V_360, Q_H264, Q_AUDIO };
     }
 
     /** Thrown when no server that is up offers the chosen quality: the UI then asks for another. */
@@ -109,7 +111,7 @@ final class Api {
         }
         // YtAPILegacy never goes below 360p (it serves the 360p file for anything smaller)
         if (kind.equals("L")) return quality == Q_H263 || quality == Q_MP4V || quality == Q_MP4V_360 || quality == Q_H264;
-        if (quality == Q_MP4V_240 || quality == Q_H264_240) return false;
+        if (quality == Q_MP4V_240 || quality == Q_H264_240 || quality == Q_AUDIO) return false;
         return !missing.containsKey(base + "#" + quality);
     }
 
@@ -1312,8 +1314,8 @@ final class Api {
         s.server = Util.baseOf(base);
         s.next = idx + 1;
         boolean threeGp = quality == Q_H263 || quality == Q_H263_144;
-        s.ext = threeGp ? "3gp" : "mp4";
-        s.mime = threeGp ? "video/3gpp" : "video/mp4";
+        s.ext = quality == Q_AUDIO ? "mp3" : threeGp ? "3gp" : "mp4";
+        s.mime = quality == Q_AUDIO ? "audio/mpeg" : threeGp ? "video/3gpp" : "video/mp4";
         s.probe = true;
         return s;
     }
