@@ -497,9 +497,9 @@ public class Tests {
         ok(threw && ml.piped.size() == 2, "no list at all: error, old servers kept");
         Api sd = new Api(); sd.seed();
         ok(sd.invidious.contains("http://s60tube.io.vn"), "built-in S60Tube instance");
-        ok(sd.piped.size() >= 10 && sd.yt2009.size() >= 2, "built-in Piped and yt2009 servers");
+        ok(sd.piped.size() >= 2 && sd.yt2009.size() >= 2, "built-in Piped and yt2009 servers");
         sd.updateInstances(L + "/legacyonly.json");
-        ok(sd.invidious.contains("http://s60tube.io.vn") && sd.piped.size() >= 10, "built-ins survive a thin list");
+        ok(sd.invidious.contains("http://s60tube.io.vn") && sd.piped.size() >= 2, "built-ins survive a thin list");
 
         // --- Piped ---
         Api pp = new Api(); pp.legacy = new Vector(); pp.piped = new Vector(); pp.piped.addElement(PIPB);

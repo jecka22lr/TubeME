@@ -25,11 +25,8 @@ final class Api {
     static final String[] SEED_YT2009 = { "https://yt2009.truehosting.net", "https://yt2009-lwdbwa.sliplane.app" };
     static final String[] SEED_INVIDIOUS = { "http://s60tube.io.vn", "https://inv.nadeko.net", "https://invidious.nerdvpn.de",
             "https://yt.chocolatemoo53.com", "https://invidious.tiekoetter.com" };
-    static final String[] SEED_PIPED = { "https://pipedapi.kavin.rocks", "https://pipedapi.leptons.xyz", "https://pipedapi.nosebs.ru",
-            "https://pipedapi-libre.kavin.rocks", "https://piped-api.privacy.com.de", "https://pipedapi.adminforge.de",
-            "https://api.piped.yt", "https://pipedapi.drgns.space", "https://pipedapi.owo.si", "https://pipedapi.ducks.party",
-            "https://piped-api.codespace.cz", "https://pipedapi.reallyaweso.me", "https://api.piped.private.coffee",
-            "https://pipedapi.darkness.services", "https://pipedapi.orangenet.cc" };
+    /** Piped servers that answered searches from CI on 2026-11-14 (most public Piped servers are gone). */
+    static final String[] SEED_PIPED = { "https://pipedapi.ducks.party", "https://api.piped.private.coffee" };
     /** YouTube's "hype" charts, standing in for the retired Trending page (same as notPipe and the TubeME server). */
     static final String[] HYPE = { "OLXuPDPDe3URMWBdmS4_jxdqVF08DAlAXWQ", "OLd7LoUR1ndxIsyTJ_5pK4tvrWBcvkewBLg",
             "OLNUaVf-BhE20xpEEdOmnxF6oyKQwpN1tBQ", "OLUZ2nAWnPVwwoXomaTvbFi1Cje8td4Z0zg",
