@@ -1,6 +1,6 @@
 # Changelog
 
-## Next
+## 0.5.0 and server 0.7.0 (not released yet)
 
 - **Downloads continue where they stopped**: a dropped or stalled connection (no data for 30 s)
   is picked up from the last byte, up to 5 times in a row. If it still fails, the part stays on

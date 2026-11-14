@@ -10,7 +10,7 @@ import java.util.Vector;
  * and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.4.1";
+    static final String VERSION = "0.5.0";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
