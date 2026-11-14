@@ -7,9 +7,9 @@ public class Connector {
   public static Connection open(String u, int m) throws IOException { return open(u, m, false); }
   public static Connection open(final String u, int m, boolean t) throws IOException {
     if (u.startsWith("file://")) return javax.microedition.io.file.FileSystemRegistry.file(u);
-    if (!u.startsWith("http://")) throw new ConnectionNotFoundException(u);
+    if (!u.startsWith("http://") && !(u.startsWith("https://") && Boolean.getBoolean("tubeme.https"))) throw new ConnectionNotFoundException(u);
     final HttpURLConnection h = (HttpURLConnection) new URL(u).openConnection(java.net.Proxy.NO_PROXY);
-    h.setInstanceFollowRedirects(false); h.setConnectTimeout(3000); h.setReadTimeout(8000);
+    h.setInstanceFollowRedirects(false); h.setConnectTimeout(3000); h.setReadTimeout(Integer.getInteger("tubeme.readTimeout", 8000));
     return (Connection) Proxy.newProxyInstance(Connector.class.getClassLoader(), new Class[]{HttpConnection.class}, (p, me, a) -> {
       switch (me.getName()) {
         case "setRequestMethod": h.setRequestMethod((String) a[0]); return null;

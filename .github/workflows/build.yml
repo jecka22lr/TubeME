@@ -42,6 +42,29 @@ jobs:
             dist/TubeME-*.zip
           body_path: RELEASE_NOTES.md
 
+  # The phone's own code against a real server with real YouTube, the way a phone uses it.
+  # Separate job: YouTube sometimes blocks CI machines, and that must not block a release.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          mkdir -p tools
+          curl -sSfL -o tools/ecj.jar https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.32.0/ecj-3.32.0.jar
+          curl -sSfL -o pg.zip https://github.com/Guardsquare/proguard/releases/download/v7.4.2/proguard-7.4.2.zip
+          unzip -q pg.zip && cp proguard-7.4.2/lib/proguard.jar tools/
+      - run: ./build.sh
+      - run: ./test/e2e.sh
+
   # The server on every system it claims to run on: a real first start (installs yt-dlp, fetches
   # Deno), then every quality converted and served. No YouTube involved.
   server:

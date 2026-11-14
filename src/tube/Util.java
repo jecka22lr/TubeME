@@ -230,6 +230,45 @@ final class Util {
         return v;
     }
 
+    /** HTML from Piped (descriptions, comments) as plain text: tags dropped, <br> as new lines, common entities decoded. */
+    static String plain(String h) {
+        if (h == null || h.indexOf('<') < 0 && h.indexOf('&') < 0) return h == null ? "" : h;
+        StringBuffer b = new StringBuffer(h.length());
+        int i = 0, n = h.length();
+        while (i < n) {
+            char c = h.charAt(i);
+            if (c == '<') {
+                int end = h.indexOf('>', i);
+                if (end < 0) break;
+                String tag = h.substring(i + 1, end).toLowerCase();
+                if (tag.startsWith("br") || tag.startsWith("/p")) b.append('\n');
+                i = end + 1;
+            } else if (c == '&') {
+                int end = h.indexOf(';', i);
+                String e = end > i && end - i < 10 ? h.substring(i + 1, end) : null;
+                String r = e == null ? null : e.equals("amp") ? "&" : e.equals("lt") ? "<" : e.equals("gt") ? ">"
+                        : e.equals("quot") ? "\"" : e.equals("#39") || e.equals("apos") ? "'" : e.equals("nbsp") ? " " : null;
+                if (r == null && e != null && e.startsWith("#")) {
+                    try {
+                        r = String.valueOf((char) Integer.parseInt(e.substring(1)));
+                    } catch (Exception x) {
+                    }
+                }
+                if (r != null) {
+                    b.append(r);
+                    i = end + 1;
+                } else {
+                    b.append(c);
+                    i++;
+                }
+            } else {
+                b.append(c);
+                i++;
+            }
+        }
+        return b.toString().trim();
+    }
+
     static String replace(String s, String a, String b) {
         int i = s.indexOf(a);
         if (i < 0) return s;

@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs
 
 HITS = set()
 VIDEO = bytes(range(256)) * 300  # 76800 bytes of "video"
-LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB = 18081, 18082, 18083, 18084, 18085, 18086, 18087, 18088, 18089
+LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB, PIP = 18081, 18082, 18083, 18084, 18085, 18086, 18087, 18088, 18089, 18090
 PREP = {}
 
 def png(w, h):
@@ -37,6 +37,35 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query); p = u.path
         if "TubeME/" not in self.headers.get("User-Agent", ""): return self.send(400, {"error": "no UA"})
         if port == DEAD: return self.send(500, b"boom", "text/plain")
+        if port == PIP:   # Piped API
+            def item(i, tag): return {"type": "stream", "url": "/watch?v=pip%s%05d" % (tag, i), "title": "Pip " + tag,
+                                      "uploaderName": "P", "uploaderUrl": "/channel/UCpippippippippippippip0", "duration": 125,
+                                      "views": 42, "thumbnail": "http://127.0.0.1:%d/thumb.jpg" % PIP}
+            if p == "/search":
+                self.hit("pip-search")
+                return self.send(200, {"items": [item(i, "s") for i in range(5)] + [{"type": "channel", "url": "/channel/UCx"}], "nextpage": "{\"a\":1}"})
+            if p == "/nextpage/search":
+                self.hit("pip-search-2:" + q["nextpage"][0])
+                return self.send(200, {"items": [item(100 + i, "s") for i in range(3)], "nextpage": None})
+            if p.startswith("/playlists/OL"):
+                self.hit("pip-popular"); return self.send(200, {"relatedStreams": [item(i, "p") for i in range(4)]})
+            if p.startswith("/streams/"):
+                self.hit("pip-streams")
+                return self.send(200, {"title": "Pip title", "uploader": "Pip up", "uploaderUrl": "/channel/UCpippippippippippippip0",
+                    "duration": 61, "views": 7, "description": "line1<br>line2 &amp; more", "uploadDate": "2026-11-01",
+                    "thumbnailUrl": "http://127.0.0.1:%d/t.jpg" % PIP,
+                    "videoStreams": [{"url": "http://v/only", "videoOnly": True, "mimeType": "video/mp4", "quality": "720p"},
+                                     {"url": "http://v/360", "videoOnly": False, "mimeType": "video/mp4", "quality": "360p"}],
+                    "relatedStreams": [item(i, "r") for i in range(6)]})
+            if p.startswith("/comments/"):
+                self.hit("pip-comments")
+                return self.send(200, {"comments": [{"author": "Pip person", "commentText": "<b>hi</b> &amp; bye", "likeCount": 2,
+                                                     "commentedTime": "1 day ago"}], "nextpage": "ctok"})
+            if p.startswith("/nextpage/comments/"):
+                return self.send(200, {"comments": [{"author": "Two", "commentText": "second", "likeCount": -1}], "nextpage": None})
+            if p.startswith("/channel/"):
+                return self.send(200, {"relatedStreams": [item(i, "c") for i in range(3)], "nextpage": None})
+            return self.send(404, {"error": "not found", "message": "no such page"})
         if port == LEG:
             if p == "/notPipe.json":
                 self.hit("list")
@@ -49,6 +78,9 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(200); self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", "100000"); self.end_headers(); self.wfile.write(b"[")
                 self.wfile.flush(); time.sleep(6); return
+            if p == "/list3.json":   # another list: one more Invidious, a Piped entry in notPipe's "api,proxy" form
+                return self.send(200, {"invidious": ["http://127.0.0.1:%d" % INV, "http://inv2.invalid"],
+                                       "piped": ["http://127.0.0.1:%d,https://proxy.invalid" % PIP], "typetype": ["https://tt.invalid"]})
             if p == "/list2.json":   # a list that also names a public TubeME server
                 return self.send(200, {"ytapilegacy": ["http://127.0.0.1:%d" % LEG], "yt2009": [], "invidious": [],
                                        "tubeme": ["http://127.0.0.1:%d/k/abcd/" % PUB]})
@@ -221,12 +253,12 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     secs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB):
+    for port in (LEG, DEAD, Y09, Y09BAD, INV, Y09OLD, Y09HANG, OWN, PUB, PIP):
         s = HTTPServer(("127.0.0.1", port), H)
         threading.Thread(target=s.serve_forever, daemon=True).start()
     print("mock up", flush=True)
     time.sleep(secs)
-    want = ["pub-tubeme", "pub-prepare", "own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
+    want = ["pip-search", "pip-popular", "pip-streams", "pip-comments", "pub-tubeme", "pub-prepare", "own-channel", "legacy-related", "legacy-channel", "inv-channel", "inv-related", "own-popular", "own-comments", "inv-comments", "own-tubeme", "own-search", "own-info", "own-prepare", "own-file", "own-thumb:320", "health", "list", "legacy-search:gatos & cães", "legacy-top", "legacy-info", "legacy-video:h263", "legacy-video:mpeg4",
             "legacy-video:h264-360", "yt2009/http_3gp_288", "yt2009/http_mpeg4", "yt2009/http_mpeg4_360",
             "yt2009/channel_fh264_getvideo", "yt2009/mp4_144", "yt2009/http_3gp", "yt2009-file", "inv-search", "inv-info", "thumb:default"]
     missing = [w for w in want if w not in HITS]

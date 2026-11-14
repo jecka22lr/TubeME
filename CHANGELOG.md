@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 and server 0.6.1
+
+- **Your server is never written off**: if it failed once (a check at start-up before Wi-Fi was
+  up, a slow answer), the app used to skip it for two minutes and go straight to the public
+  servers. Your own TubeME server and your own YtAPILegacy server are now always asked first,
+  with their full waiting time, and the screen says why when the app moves on from it
+- **Many more services**: Piped servers are supported (search, Popular, related, channels,
+  comments, 360p), and the app has built-in Invidious (including S60Tube, `s60tube.io.vn`),
+  Piped, yt2009 and YtAPILegacy servers that stay in the list whatever a downloaded list says
+- **Several server lists, merged**: your own server's new `/servers` (plain http, it fetches the
+  https lists for the phone), the list URL from Settings, and `servers.json` in this repository.
+  One list being down costs nothing
+- Server: every request is logged (`GET /search?q=... -> 200 in 3.1 s`), so you can see the
+  phone reaching it
+- End-to-end test in CI: the phone's own code against a real server and real YouTube, every
+  quality played; public services reported
+
 ## 0.4.0 and server 0.6.0
 
 - **Public servers**: the server can be hosted for other people. `--key` makes it friends-only

@@ -5,14 +5,36 @@ import java.util.Vector;
 
 /**
  * Talks to the same kinds of servers notPipe uses: YtAPILegacy (metadata +
- * video + conversion), yt2009 (video + conversion) and Invidious (metadata
- * fallback). Servers are picked at random and swapped out when they fail.
+ * video + conversion), yt2009 (video + conversion), Invidious and Piped
+ * (metadata, 360p H.264), plus TubeME servers. Servers are picked at random
+ * and swapped out when they fail.
  */
 final class Api {
-    static final String VERSION = "0.4.0";
+    static final String VERSION = "0.4.1";
 
     static final String DEFAULT_LIST_URL = "http://144.31.189.129/notPipe.json";
     static final String DEFAULT_LEGACY = "http://45.132.96.44:2823";
+    /** TubeME's own list in the repository: https, so a last resort for old phones. */
+    static final String GITHUB_LIST_URL = "https://raw.githubusercontent.com/jecka22lr/TubeME/main/servers.json";
+
+    /**
+     * Built in, so the app still knows more than one server when no list can
+     * be loaded. Plain http first where a server offers it.
+     */
+    static final String[] SEED_LEGACY = { DEFAULT_LEGACY };
+    static final String[] SEED_YT2009 = { "https://yt2009.truehosting.net", "https://yt2009-lwdbwa.sliplane.app" };
+    static final String[] SEED_INVIDIOUS = { "http://s60tube.io.vn", "https://inv.nadeko.net", "https://invidious.nerdvpn.de",
+            "https://yt.chocolatemoo53.com", "https://invidious.tiekoetter.com" };
+    static final String[] SEED_PIPED = { "https://pipedapi.kavin.rocks", "https://pipedapi.leptons.xyz", "https://pipedapi.nosebs.ru",
+            "https://pipedapi-libre.kavin.rocks", "https://piped-api.privacy.com.de", "https://pipedapi.adminforge.de",
+            "https://api.piped.yt", "https://pipedapi.drgns.space", "https://pipedapi.owo.si", "https://pipedapi.ducks.party",
+            "https://piped-api.codespace.cz", "https://pipedapi.reallyaweso.me", "https://api.piped.private.coffee",
+            "https://pipedapi.darkness.services", "https://pipedapi.orangenet.cc" };
+    /** YouTube's "hype" charts, standing in for the retired Trending page (same as notPipe and the TubeME server). */
+    static final String[] HYPE = { "OLXuPDPDe3URMWBdmS4_jxdqVF08DAlAXWQ", "OLd7LoUR1ndxIsyTJ_5pK4tvrWBcvkewBLg",
+            "OLNUaVf-BhE20xpEEdOmnxF6oyKQwpN1tBQ", "OLUZ2nAWnPVwwoXomaTvbFi1Cje8td4Z0zg",
+            "OLewrgOzMLeOADYzQ1ewNeqtPlJP20RE_Zg", "OLbXum44nJ19cZmR7GxDm5rF_Nj_coRoO5g",
+            "OLPPB3977IfFUtPW8213fFOsf2lmAWfahDg", "OLZyZj8vWFMkIOGlFzyKuFlLA2PY42VhRuA" };
 
     /** H.263 352x288 + AMR in 3GP. Plays on nearly anything with video. */
     static final int Q_H263 = 0;
@@ -146,7 +168,7 @@ final class Api {
         while (true) {
             Object o;
             try {
-                o = Json.parse(Net.getText(base + "/prepare?id=" + v.id + "&q=" + Q_KEYS[quality]));
+                o = Json.parse(Net.getText(base + "/prepare?id=" + v.id + "&q=" + Q_KEYS[quality], OWN_TIMEOUT));
             } catch (java.io.IOException io) {
                 String m = io.getMessage();
                 if (m != null && m.startsWith("HTTP 404")) {
@@ -270,6 +292,10 @@ final class Api {
     Vector legacy = new Vector();
     Vector yt2009 = new Vector();
     Vector invidious = new Vector();
+    /** Piped API servers (metadata, 360p H.264 through their proxy). */
+    Vector piped = new Vector();
+    /** Set by seed(): built-in servers stay in every list, whatever a downloaded list says. */
+    private boolean seeded;
     /** Optional user-set YtAPILegacy server, always tried first. */
     String custom = "";
 
@@ -286,13 +312,24 @@ final class Api {
         dead.remove(base);
     }
 
+    /**
+     * The servers the user set up (own TubeME server, own YtAPILegacy).
+     * They are never written off: always asked first, always given their
+     * full time, whatever happened to them earlier in the session.
+     */
+    private boolean pinned(String base) {
+        return isMine(base) || (base != null && base.length() > 0 && base.equals(Util.cleanBase(custom)));
+    }
+
     private void markDead(String base) {
+        if (pinned(base)) return;
         dead.put(base, new Long(System.currentTimeMillis()));
         good.remove(base);
     }
 
     /** Files a metadata failure: no connection means down, anything else means "answers, but not with this". */
     private void failed(String base, Exception ex) {
+        if (pinned(base)) return;
         String m = ex.getMessage();
         boolean network = ex instanceof java.io.IOException && (m == null || !m.startsWith("HTTP "));
         if (network) markDead(base);
@@ -305,6 +342,7 @@ final class Api {
      * given a dead address fails in ways we never see.
      */
     private boolean alive(String base) {
+        if (pinned(base)) return true; // the real request will tell
         if (good.containsKey(base)) return true;
         Object when = dead.get(base);
         if (when != null && System.currentTimeMillis() - ((Long) when).longValue() < RETRY_DEAD_AFTER) return false;
@@ -323,6 +361,7 @@ final class Api {
         for (int i = 0; i < legacy.size(); i++) add(v, "YtAPILegacy", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "yt2009", (String) yt2009.elementAt(i));
         for (int i = 0; i < invidious.size(); i++) add(v, "Invidious", (String) invidious.elementAt(i));
+        for (int i = 0; i < piped.size(); i++) add(v, "Piped", (String) piped.elementAt(i));
         return ranked(v, 0);
     }
 
@@ -370,14 +409,19 @@ final class Api {
         for (int i = 0; i < legacy.size(); i++) add(v, "L", (String) legacy.elementAt(i));
         for (int i = 0; i < yt2009.size(); i++) add(v, "Y", (String) yt2009.elementAt(i));
         addShuffled(v, invidious, "I");
+        addShuffled(v, piped, "P");
+        int pipUp = 0;
         for (int i = 0; i < v.size(); i++) {
             String[] e = (String[]) v.elementAt(i);
+            boolean pip = e[0].equals("P");
+            if (pip && !full && pipUp >= ENOUGH_INVIDIOUS) continue;
             boolean inv = e[0].equals("I");
-            if (inv && !full && invUp >= ENOUGH_INVIDIOUS) break;
+            if (inv && !full && invUp >= ENOUGH_INVIDIOUS) continue;
             tested++;
             if (ping(e[1])) {
                 up++;
                 if (inv) invUp++;
+                if (pip) pipUp++;
             }
         }
         Log.add("sweep " + up + "/" + tested + " up, " + (v.size() - tested) + " not tested");
@@ -432,6 +476,27 @@ final class Api {
         legacy.addElement(DEFAULT_LEGACY);
     }
 
+    /** Adds the built-in servers, now and after every list update. The app calls this; the tests mostly don't. */
+    void seed() {
+        seeded = true;
+        mergeSeeds();
+    }
+
+    private void mergeSeeds() {
+        legacy = merged(legacy, SEED_LEGACY);
+        yt2009 = merged(yt2009, SEED_YT2009);
+        invidious = merged(invidious, SEED_INVIDIOUS);
+        piped = merged(piped, SEED_PIPED);
+        order = null;
+    }
+
+    private static Vector merged(Vector have, String[] more) {
+        Vector v = new Vector();
+        for (int i = 0; i < have.size(); i++) if (!v.contains(have.elementAt(i))) v.addElement(have.elementAt(i));
+        for (int i = 0; i < more.length; i++) if (!v.contains(more[i])) v.addElement(more[i]);
+        return v;
+    }
+
     /** A playable address plus what it is. */
     static final class Stream {
         String url;
@@ -448,22 +513,67 @@ final class Api {
 
     /** Loads the shared instance list. Returns how many servers it now knows. */
     int updateInstances(String listUrl) throws Exception {
-        Object o = Json.parse(Net.getText(listUrl));
-        if (!(o instanceof Hashtable)) throw new Exception("Bad instance list");
-        Vector l = clean(Json.arr(o, "ytapilegacy"));
-        Vector y = clean(Json.arr(o, "yt2009"));
-        Vector i = clean(Json.arr(o, "invidious"));
-        Vector t = clean(Json.arr(o, "tubeme"));
-        if (l.size() + y.size() + i.size() + t.size() == 0) throw new Exception("Instance list is empty");
+        Vector one = new Vector();
+        one.addElement(listUrl);
+        return updateInstances(one);
+    }
+
+    /**
+     * Loads every list it can from urls and merges them: one dead list
+     * (or list host) costs nothing as long as another answers. Returns how
+     * many servers it now knows; throws only when no list loaded at all.
+     */
+    int updateInstances(Vector urls) throws Exception {
+        Vector l = new Vector(), y = new Vector(), i = new Vector(), t = new Vector(), p = new Vector();
+        int loaded = 0;
+        Exception last = null;
+        for (int k = 0; k < urls.size(); k++) {
+            String u = (String) urls.elementAt(k);
+            if (u == null || u.length() == 0) continue;
+            try {
+                Object o = Json.parse(Net.getText(u));
+                if (!(o instanceof Hashtable)) throw new Exception("Bad instance list");
+                int before = l.size() + y.size() + i.size() + t.size() + p.size();
+                into(l, Json.arr(o, "ytapilegacy"));
+                into(y, Json.arr(o, "yt2009"));
+                into(i, Json.arr(o, "invidious"));
+                into(t, Json.arr(o, "tubeme"));
+                into(p, Json.arr(o, "piped"));
+                int got = l.size() + y.size() + i.size() + t.size() + p.size() - before;
+                Log.add("list " + u + ": " + got + " new servers");
+                if (Json.arr(o, "typetype").size() > 0) Log.add("list has TypeType servers (not supported, skipped)");
+                loaded++;
+            } catch (Exception ex) {
+                Log.err("list " + u, ex);
+                last = ex;
+            }
+        }
+        if (loaded == 0) throw last != null ? last : new Exception("No server list address");
+        if (l.size() + y.size() + i.size() + t.size() + p.size() == 0) throw new Exception("Instance list is empty");
         if (l.size() == 0) l.addElement(DEFAULT_LEGACY);
         legacy = l;
         tubeme = t;
         yt2009 = y;
         invidious = i;
+        piped = p;
+        if (seeded) mergeSeeds();
         order = null;
         // servers get updated too: ask again what they offer
         missing.clear();
-        return l.size() + y.size() + i.size() + t.size();
+        return legacy.size() + yt2009.size() + invidious.size() + tubeme.size() + piped.size();
+    }
+
+    /** Adds clean server addresses not seen yet. Piped entries may be "api,proxy": the api part is kept. */
+    private static void into(Vector to, Vector in) {
+        for (int k = 0; k < in.size(); k++) {
+            Object e = in.elementAt(k);
+            if (!(e instanceof String)) continue;
+            String s = (String) e;
+            int comma = s.indexOf(',');
+            if (comma >= 0) s = s.substring(0, comma);
+            s = Util.cleanBase(s.trim());
+            if (s.length() > 0 && !to.contains(s)) to.addElement(s);
+        }
     }
 
     private static Vector clean(Vector in) {
@@ -505,7 +615,7 @@ final class Api {
     private Vector metaOrder() {
         Vector v = new Vector();
         String mine = Util.cleanBase(own);
-        if (!metaTrouble(mine)) add(v, "T", mine);
+        add(v, "T", mine);
         add(v, "L", Util.cleanBase(custom));
         // TubeME and YtAPILegacy before Invidious (they can also convert), each group fastest first
         Vector l = new Vector();
@@ -516,6 +626,10 @@ final class Api {
         Vector i = new Vector();
         addShuffled(i, invidious, "I");
         i = ranked(i, 0);
+        Vector pv = new Vector();
+        addShuffled(pv, piped, "P");
+        pv = ranked(pv, 0);
+        for (int k = 0; k < pv.size(); k++) i.addElement(pv.elementAt(k));
         // servers that are down or already failed at metadata go behind everything that works
         for (int pass = 0; pass < 2; pass++) {
             for (int k = 0; k < l.size(); k++) {
@@ -527,7 +641,6 @@ final class Api {
                 if (metaTrouble(e[1]) == (pass == 1)) add(v, e[0], e[1]);
             }
         }
-        add(v, "T", mine);
         return v;
     }
 
@@ -555,7 +668,7 @@ final class Api {
         Exception last = null;
         for (int k = 0; k < order.size(); k++) {
             String[] e = (String[]) order.elementAt(k);
-            String path = e[0].equals("L") ? legacyPath : e[0].equals("T") ? ownPath : invPath;
+            String path = e[0].equals("L") ? legacyPath : e[0].equals("T") ? ownPath : e[0].equals("P") ? null : invPath;
             if (path == null) continue;
             say("Asking " + who(e[1]));
             try {
@@ -588,6 +701,7 @@ final class Api {
     private static Video parse(String kind, Object o, String base) {
         if (kind.equals("L")) return fromLegacy(o, base);
         if (kind.equals("T")) return fromOwn(o, base);
+        if (kind.equals("P")) return fromPiped(o, base);
         return fromInvidious(o, base);
     }
 
@@ -596,11 +710,12 @@ final class Api {
         Exception last = null;
         for (int k = 0; k < order.size(); k++) {
             String[] e = (String[]) order.elementAt(k);
-            boolean leg = e[0].equals("L"), mine = e[0].equals("T");
+            boolean leg = e[0].equals("L"), mine = e[0].equals("T"), pip = e[0].equals("P");
             Object o;
             try {
                 String path = leg ? "/get-ytvideo-info.php?video_id=" + id
                         : mine ? "/info?id=" + id
+                        : pip ? "/streams/" + id
                         : "/api/v1/videos/" + id + "?local=true&fields=videoId,title,author,authorId,lengthSeconds,viewCount,"
                         + "description,publishedText,formatStreams";
                 say("Asking " + who(e[1]));
@@ -614,11 +729,12 @@ final class Api {
                 if (e[1].equals(lastGood)) lastGood = null;
                 continue;
             }
-            Video v = parse(e[0], o, e[1]);
+            Video v = pip ? pipedInfo(o) : parse(e[0], o, e[1]);
             if (v == null) v = new Video();
             v.id = id;
             // the info answer doesn't repeat the id, so the thumbnail address is built here
-            v.thumb = leg ? e[1] + "/thumbnail/" + id : mine ? e[1] + "/thumb?id=" + id : e[1] + "/vi/" + id + "/default.jpg";
+            v.thumb = leg ? e[1] + "/thumbnail/" + id : mine ? e[1] + "/thumb?id=" + id
+                    : pip ? Json.str(o, "thumbnailUrl") : e[1] + "/vi/" + id + "/default.jpg";
             v.source = leg ? e[1] : null;
             if (v.title.length() == 0 && v.author.length() == 0) {
                 String err = Json.str(o, "error");
@@ -631,6 +747,11 @@ final class Api {
                 v.published = Json.str(o, "published_at");
             } else if (mine) {
                 v.published = Json.str(o, "published");
+            } else if (pip) {
+                v.published = Json.str(o, "uploadDate");
+                v.stream = pipedStream(o);
+                v.description = Util.plain(Json.str(o, "description"));
+                return v;
             } else {
                 v.published = Json.str(o, "publishedText");
                 Vector fs = Json.arr(o, "formatStreams");
@@ -655,6 +776,7 @@ final class Api {
             try {
                 String path = leg ? "/get-ytvideo-info.php?video_id=" + id
                         : mine ? "/comments?id=" + id
+                        : e[0].equals("P") ? "/comments/" + id
                         : "/api/v1/comments/" + id + "?fields=comments";
                 say("Asking " + who(e[1]));
                 Object o = Json.parse(Net.getText(e[1] + path, metaTimeout(e[0])));
@@ -663,15 +785,8 @@ final class Api {
                 if (o instanceof Hashtable && Json.str(o, "error").length() > 0 && in.size() == 0) throw new Exception(Json.str(o, "error"));
                 Vector out = new Vector();
                 for (int i = 0; i < in.size() && out.size() < MAX_COMMENTS; i++) {
-                    Object c = in.elementAt(i);
-                    String text = Json.str(c, mine || leg ? "text" : "content");
-                    if (text.length() == 0) continue;
-                    if (text.length() > 500) text = text.substring(0, 500) + "...";
-                    String likes = Json.str(c, mine ? "likes" : "likeCount");
-                    String when = Json.str(c, mine ? "when" : leg ? "published_at" : "publishedText");
-                    String extra = (likes.length() > 0 && !likes.equals("0")) ? likes + (likes.equals("1") ? " like" : " likes") : "";
-                    if (when.length() > 0) extra = extra.length() > 0 ? extra + ", " + when : when;
-                    out.addElement(new String[] { Json.str(c, "author"), text, extra });
+                    String[] row = commentRow(e[0], in.elementAt(i));
+                    if (row != null) out.addElement(row);
                 }
                 markGood(e[1]);
                 return out;
@@ -747,6 +862,20 @@ final class Api {
                 default: return null;
             }
         }
+        if (kind.equals("P")) {
+            if (page > 1 && token == null) return null;
+            String tok = token == null ? null : Util.urlEncode(token);
+            switch (f.what) {
+                case Feed.SEARCH: return (tok == null ? "/search?q=" : "/nextpage/search?nextpage=" + tok + "&q=") + q + "&filter=videos";
+                case Feed.POPULAR: return page == 1 ? "/playlists/" + HYPE[Util.RND.nextInt(HYPE.length)] : null;
+                case Feed.RELATED: return page == 1 ? "/streams/" + q : null;
+                case Feed.CHANNEL:
+                    if (!uc) return null;
+                    return tok == null ? "/channel/" + q : "/nextpage/channel/" + q + "?nextpage=" + tok;
+                case Feed.COMMENTS: return tok == null ? "/comments/" + q : "/nextpage/comments/" + q + "?nextpage=" + tok;
+                default: return null;
+            }
+        }
         String fields = "fields=videoId,title,author,authorId,lengthSeconds,viewCount";
         switch (f.what) {
             case Feed.SEARCH: return "/api/v1/search?type=video&" + fields + "&q=" + q + "&page=" + page;
@@ -769,10 +898,13 @@ final class Api {
         if (o instanceof Vector) {
             in = (Vector) o;
         } else if (o instanceof Hashtable) {
-            String key = f.comments() ? "comments" : f.what == Feed.RELATED ? "recommendedVideos" : "videos";
+            boolean pip = kind.equals("P");
+            String key = f.comments() ? "comments"
+                    : pip ? (f.what == Feed.SEARCH ? "items" : "relatedStreams")
+                    : f.what == Feed.RELATED ? "recommendedVideos" : "videos";
             if (!((Hashtable) o).containsKey(key)) throw new Exception(errorOf(o));
             in = Json.arr(o, key);
-            String tok = Json.str(o, "continuation");
+            String tok = Json.str(o, pip ? "nextpage" : "continuation");
             f.token = tok.length() > 0 ? tok : null;
         } else {
             throw new Exception("Bad answer");
@@ -803,15 +935,23 @@ final class Api {
     }
 
     private static String[] commentRow(String kind, Object c) {
-        boolean mine = kind.equals("T"), leg = kind.equals("L");
-        String text = Json.str(c, mine || leg ? "text" : "content");
+        boolean mine = kind.equals("T"), leg = kind.equals("L"), pip = kind.equals("P");
+        String text = pip ? Util.plain(Json.str(c, "commentText")) : Json.str(c, mine || leg ? "text" : "content");
         if (text.length() == 0) return null;
         if (text.length() > 500) text = text.substring(0, 500) + "...";
         String likes = Json.str(c, mine ? "likes" : "likeCount");
-        String when = Json.str(c, mine ? "when" : leg ? "published_at" : "publishedText");
+        if (likes.startsWith("-")) likes = "";
+        String when = Json.str(c, mine ? "when" : leg ? "published_at" : pip ? "commentedTime" : "publishedText");
         String extra = (likes.length() > 0 && !likes.equals("0")) ? likes + (likes.equals("1") ? " like" : " likes") : "";
         if (when.length() > 0) extra = extra.length() > 0 ? extra + ", " + when : when;
         return new String[] { Json.str(c, "author"), text, extra };
+    }
+
+    /** Lists whose next page needs a token from the last answer (no token: no more pages). */
+    private static boolean byToken(Feed f, String kind) {
+        if (kind.equals("I")) return f.what == Feed.CHANNEL || f.comments();
+        if (kind.equals("P")) return f.what == Feed.SEARCH || f.what == Feed.CHANNEL || f.comments();
+        return false;
     }
 
     /** Some kinds of server can't page a given list at all after page 1. */
@@ -839,7 +979,7 @@ final class Api {
                 f.kind = e[0];
                 f.base = e[1];
                 f.page = 1;
-                f.end = n == 0 || onePageOnly(f, e[0]) || (e[0].equals("I") && (f.what == Feed.CHANNEL || f.comments()) && f.token == null);
+                f.end = n == 0 || onePageOnly(f, e[0]) || (byToken(f, e[0]) && f.token == null);
                 if (e[0].equals("L") && f.what != Feed.COMMENTS) lastGood = e[1];
                 markGood(e[1]);
                 metaBad.remove(e[1]);
@@ -876,7 +1016,7 @@ final class Api {
         Object o = Json.parse(Net.getText(f.base + path, f.what == Feed.RELATED && f.kind.equals("L") ? 60000 : metaTimeout(f.kind)));
         int n = takePage(f, f.kind, f.base, o);
         f.page = page;
-        if (n == 0 || (f.kind.equals("I") && (f.what == Feed.CHANNEL || f.comments()) && f.token == null)) f.end = true;
+        if (n == 0 || (byToken(f, f.kind) && f.token == null)) f.end = true;
         return n;
     }
 
@@ -911,7 +1051,9 @@ final class Api {
     }
 
     private static String errorOf(Object o) {
-        String s = Json.str(o, "error");
+        String s = Json.str(o, "message");
+        if (s.length() == 0) s = Json.str(o, "error");
+        if (s.length() > 160) s = s.substring(0, 160);
         return s.length() > 0 ? s : "Bad answer";
     }
 
@@ -948,6 +1090,60 @@ final class Api {
         v.thumb = base + "/vi/" + id + "/default.jpg";
         v.channel = channelRef(Json.str(o, "authorId"));
         return v;
+    }
+
+    /** One entry of a Piped list: { url: "/watch?v=ID", title, uploaderName, uploaderUrl, duration, views, thumbnail }. */
+    private static Video fromPiped(Object o, String base) {
+        if (!(o instanceof Hashtable)) return null;
+        String url = Json.str(o, "url");
+        String type = Json.str(o, "type");
+        if (type.length() > 0 && !type.equals("stream")) return null;
+        int at = url.indexOf("v=");
+        if (at < 0) return null;
+        String id = url.substring(at + 2);
+        int amp = id.indexOf('&');
+        if (amp >= 0) id = id.substring(0, amp);
+        Video v = new Video();
+        v.id = id;
+        v.title = Json.str(o, "title");
+        v.author = Json.str(o, "uploaderName");
+        int len = Util.toInt(Json.str(o, "duration"), -1);
+        v.duration = len > 0 ? Util.duration(len) : "";
+        String views = Json.str(o, "views");
+        v.views = views.startsWith("-") ? "" : views;
+        v.thumb = Json.str(o, "thumbnail");
+        v.channel = channelRef(Json.str(o, "uploaderUrl"));
+        return v;
+    }
+
+    /** A Piped /streams answer as video details (the caller fills id and thumbnail). */
+    private static Video pipedInfo(Object o) {
+        if (!(o instanceof Hashtable)) return null;
+        Video v = new Video();
+        v.title = Json.str(o, "title");
+        v.author = Json.str(o, "uploader");
+        int len = Util.toInt(Json.str(o, "duration"), -1);
+        v.duration = len > 0 ? Util.duration(len) : "";
+        String views = Json.str(o, "views");
+        v.views = views.startsWith("-") ? "" : views;
+        v.channel = channelRef(Json.str(o, "uploaderUrl"));
+        return v;
+    }
+
+    /** The muxed (picture + sound) MP4 from a Piped /streams answer, usually 360p H.264. "" when there is none. */
+    private static String pipedStream(Object o) {
+        Vector vs = Json.arr(o, "videoStreams");
+        String best = "";
+        for (int k = 0; k < vs.size(); k++) {
+            Object s = vs.elementAt(k);
+            if (Json.str(s, "videoOnly").equals("true")) continue;
+            String mime = Json.str(s, "mimeType");
+            if (mime.length() > 0 && mime.indexOf("mp4") < 0) continue;
+            String u = Json.str(s, "url");
+            if (u.length() == 0) continue;
+            if (best.length() == 0 || Json.str(s, "quality").startsWith("360")) best = u;
+        }
+        return best;
     }
 
     /** "PT3M21S" -> "3:21"; anything else is passed through. */
@@ -1041,6 +1237,7 @@ final class Api {
             if (!e[0].equals("D") && !offers(e[0], e[1], quality)) {
                 lastError = new Exception(host(e[1]) + " doesn't offer this quality");
                 anyMissing = true;
+                if (isMine(e[1])) say("Your server doesn't make " + Q_NAMES[quality] + ". Trying other servers...");
                 continue;
             }
             if (e[0].equals("Y")) {
@@ -1104,7 +1301,7 @@ final class Api {
 
     private void failedStream(String base, Exception ex) {
         Log.err("stream " + base, ex);
-        say(host(base) + ": " + msg(ex));
+        say((isMine(base) ? "Your server" : host(base)) + ": " + msg(ex) + (isMine(base) ? ". Trying other servers..." : ""));
         lastError = ex;
         String m = ex.getMessage();
         if (m != null && m.indexOf("doesn't offer this quality") >= 0) anyMissing = true;

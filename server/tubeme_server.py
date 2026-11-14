@@ -43,7 +43,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 FILE_RE = re.compile(r"^[A-Za-z0-9_-]{11}-[a-z0-9-]+\.(mp4|3gp)$")
 
@@ -384,6 +384,35 @@ class Server:
         return [dict(id="demo%07d" % (base + i), title="%s %d" % (title, base + i), author="TubeME demo",
                      channel_id="UCdemodemodemodemodemo00", seconds=8 + i * 4, views=1000 * i) for i in range(1, 4)]
 
+    LIST_SOURCES = ["http://144.31.189.129/notPipe.json",
+                    "https://raw.githubusercontent.com/jecka22lr/TubeME/main/servers.json"]
+    LIST_KEYS = ("tubeme", "ytapilegacy", "yt2009", "invidious", "piped")
+    _lists = None
+    _lists_at = 0
+
+    def server_lists(self):
+        """Every public server list this computer can reach, merged; kept for an hour.
+        The phone gets them in one plain-http answer, even lists that are only on https."""
+        if self._lists is not None and time.time() - self._lists_at < 3600:
+            return self._lists
+        out = {k: [] for k in self.LIST_KEYS}
+        got = 0
+        for src in self.LIST_SOURCES:
+            try:
+                with urllib.request.urlopen(src, timeout=15) as u:
+                    data = json.loads(u.read().decode("utf-8"))
+                for k in self.LIST_KEYS:
+                    for e in data.get(k) or []:
+                        if isinstance(e, str) and e.strip() and e.strip() not in out[k]:
+                            out[k].append(e.strip())
+                got += 1
+            except Exception as e:
+                log("server list", src, "failed:", short(e))
+        if got:
+            self._lists, self._lists_at = out, time.time()
+            log("server lists: %d sources, %d servers" % (got, sum(len(v) for v in out.values())))
+        return out
+
     def popular(self, page=1):
         """Popular videos, kept for half an hour (the charts change slowly)."""
         key = ("popular", page)
@@ -694,6 +723,27 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    # one line per request, so you can see the phone reaching the server; repeated
+    # /prepare polls and thumbnails are left out (conversions log their own progress)
+    _last_poll = {}
+
+    def log_request(self, code="-", size="-"):
+        path = self.path
+        bare = urllib.parse.urlparse(path).path
+        if self.server.app.key:
+            bare = re.sub(r"^/k/[^/]+", "", bare)
+        if bare == "/thumb":
+            return
+        ip = self.client_ip()
+        took = time.time() - getattr(self, "_t0", time.time())
+        if bare == "/prepare":
+            if Handler._last_poll.get(ip) == (path, code):
+                return
+            Handler._last_poll[ip] = (path, code)
+        if self.server.app.key:
+            path = path.replace("/k/" + self.server.app.key, "/k/***")
+        log("%s %s %s -> %s in %.1f s" % (ip, self.command, urllib.parse.unquote(path)[:150], code, took))
+
     def send_json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -756,6 +806,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             return
+        self._t0 = time.time()
         try:
             self.route()
         finally:
@@ -788,7 +839,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/tubeme":
                 lim = s.limits
                 return self.send_json({"tubeme": 1, "version": VERSION, "demo": s.demo, "qualities": s.qualities,
-                                       "features": ["comments", "popular", "channel", "pages"],
+                                       "features": ["comments", "popular", "channel", "pages", "servers"],
                                        "sound3gp": "amr" if s.has_amr else "aac",
                                        "limits": {"per_minute": lim.per_minute, "conversions_per_hour": lim.conversions_per_hour,
                                                   "at_once": lim.at_once, "max_minutes": lim.max_seconds // 60}})
@@ -800,6 +851,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not q.get("q", "").strip():
                     return self.fail(400, "q is required")
                 return self.send_json(s.search(q["q"].strip(), page))
+            if p == "/servers":
+                return self.send_json(s.server_lists())
             if p == "/popular":
                 return self.send_json(s.popular(page))
             if p == "/channel":

@@ -356,12 +356,17 @@ def main():
         # second request for a finished conversion is instant
         t0 = time.time(); code, st = js("/prepare?id=%s&q=%s" % (vid, quals[0]))
         ok(st["state"] == "ready" and time.time() - t0 < 1, "finished conversions are kept")
-        print("SERVER TESTS PASSED (%d checks)" % n)
+        code, lists = js("/servers")
+        ok(code == 200 and all(k in lists for k in ("tubeme", "ytapilegacy", "yt2009", "invidious", "piped")), "/servers hands out merged lists")
     finally:
         srv.terminate()
         try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
         except Exception: out = ""
         if "--show-log" in sys.argv: print(out)
         shutil.rmtree(cache, ignore_errors=True)
+    ok("GET /search?q=cats & dogs -> 200" in out, "each request is logged")
+    lines = [l.split(" ", 1)[1] for l in out.splitlines() if "GET /prepare" in l]
+    ok(lines and all(a != b for a, b in zip(lines, lines[1:])), "repeated /prepare polls aren't logged one by one")
+    print("SERVER TESTS PASSED (%d checks)" % n)
 
 main()

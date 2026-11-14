@@ -69,7 +69,8 @@ public class Tests {
 
         // --- instance list ---
         Api api = new Api();
-        eq(Integer.valueOf(api.updateInstances(L + "/notPipe.json")), Integer.valueOf(5), "instance list count");
+        eq(Integer.valueOf(api.updateInstances(L + "/notPipe.json")), Integer.valueOf(6), "instance list count");
+        eq(Integer.valueOf(api.piped.size()), Integer.valueOf(1), "piped instances read");
         eq(Integer.valueOf(api.legacy.size()), Integer.valueOf(2), "legacy instances");
         eq(api.invidious.elementAt(0), INV, "trailing slash trimmed");
 
@@ -482,6 +483,55 @@ public class Tests {
         eq(((String[]) sv.elementAt(3))[1], YBAD, "server list: untested after tested");
         eq(((String[]) sv.elementAt(4))[1], GONE, "server list: down last");
         eq(((Video) rk.search("x").elementAt(0)).source, L, "metadata prefers YtAPILegacy while it is up");
+
+        // --- several lists merged; a dead list costs nothing; built-in servers always stay ---
+        String PIPB = "http://127.0.0.1:18090";
+        Api ml = new Api();
+        Vector srcs = new Vector(); srcs.addElement(GONE + "/list.json"); srcs.addElement(L + "/notPipe.json"); srcs.addElement(L + "/list3.json");
+        ml.updateInstances(srcs);
+        eq(Integer.valueOf(ml.invidious.size()), Integer.valueOf(2), "invidious from both lists, no duplicates");
+        eq(Integer.valueOf(ml.piped.size()), Integer.valueOf(2), "piped from both lists");
+        eq(ml.piped.elementAt(1), PIPB, "piped proxy part dropped");
+        Vector badL = new Vector(); badL.addElement(GONE + "/list.json");
+        threw = false; try { ml.updateInstances(badL); } catch (Exception e) { threw = true; }
+        ok(threw && ml.piped.size() == 2, "no list at all: error, old servers kept");
+        Api sd = new Api(); sd.seed();
+        ok(sd.invidious.contains("http://s60tube.io.vn"), "built-in S60Tube instance");
+        ok(sd.piped.size() >= 10 && sd.yt2009.size() >= 2, "built-in Piped and yt2009 servers");
+        sd.updateInstances(L + "/legacyonly.json");
+        ok(sd.invidious.contains("http://s60tube.io.vn") && sd.piped.size() >= 10, "built-ins survive a thin list");
+
+        // --- Piped ---
+        Api pp = new Api(); pp.legacy = new Vector(); pp.piped = new Vector(); pp.piped.addElement(PIPB);
+        Feed pps = new Feed(Feed.SEARCH, "cats", "cats");
+        pp.open(pps);
+        eq(pps.kind, "P", "search from Piped"); eq(Integer.valueOf(pps.items.size()), Integer.valueOf(5), "channels left out");
+        Video pv0 = (Video) pps.items.elementAt(0);
+        eq(pv0.id, "pips00000", "id from /watch?v="); eq(pv0.duration, "2:05", "duration"); eq(pv0.channel, "UCpippippippippippippip0", "channel");
+        ok(!pps.end, "more pages via nextpage");
+        eq(Integer.valueOf(pp.more(pps)), Integer.valueOf(3), "page 2"); ok(pps.end, "no nextpage: end");
+        Feed pr = new Feed(Feed.RELATED, "abcDEF_-001", "Related"); pp.open(pr);
+        eq(Integer.valueOf(pr.items.size()), Integer.valueOf(6), "related from /streams"); ok(pr.end, "related one page");
+        Feed pop = new Feed(Feed.POPULAR, "", "Popular"); pp.open(pop); eq(Integer.valueOf(pop.items.size()), Integer.valueOf(4), "popular from hype playlist");
+        Feed pc = new Feed(Feed.COMMENTS, "abcDEF_-001", "Comments"); pp.open(pc);
+        eq(((String[]) pc.items.elementAt(0))[1], "hi & bye", "comment html cleaned");
+        eq(((String[]) pc.items.elementAt(0))[2], "2 likes, 1 day ago", "comment extra");
+        pp.more(pc); eq(((String[]) pc.items.elementAt(1))[2], "", "hidden likes not shown"); ok(pc.end, "comments end");
+        Video pi = pp.info("abcDEF_-001");
+        eq(pi.title, "Pip title", "info title"); eq(pi.stream, "http://v/360", "muxed 360p stream picked");
+        eq(pi.description, "line1\nline2 & more", "description as text");
+        eq(pp.stream(pi, Api.Q_H264, 0).url, "http://v/360", "Piped stream plays as H.264 360p");
+
+        // --- your own server is never written off ---
+        Api pin = new Api(); pin.legacy = new Vector(); pin.legacy.addElement(L); pin.own = OWN;
+        pin.ping(GONE); // unrelated
+        Api.RETRY_DEAD_AFTER = 600000;
+        Api pin2 = new Api(); pin2.legacy = new Vector(); pin2.legacy.addElement(L); pin2.own = GONE;
+        pin2.sweep(true);
+        eq(pin2.status(GONE), "not tested", "own server failing a ping isn't marked down");
+        Feed pf = new Feed(Feed.SEARCH, "x", "x"); pin2.open(pf); eq(pf.kind, "L", "falls back when own is off");
+        pin2.own = OWN;
+        Feed pf2 = new Feed(Feed.SEARCH, "x", "x"); pin2.open(pf2); eq(pf2.kind, "T", "own server asked first again");
 
         // --- files: folder pick, .ram, download to file ---
         new java.io.File("/tmp/tubefs/E:").mkdirs();

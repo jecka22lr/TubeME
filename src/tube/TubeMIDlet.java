@@ -92,6 +92,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         // first-run default: S60 plays MPEG-4 up to 640x360 but H.264 only to QVGA
         if (Util.isSymbian()) settings.quality = Api.Q_MP4V_360;
         settings.load(api);
+        api.seed();
         // only offer qualities this phone can show; move a saved one that is no longer offered
         loadQualities();
         modeNames = Settings.modeNames(Util.isSymbian());
@@ -787,7 +788,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                         playFile((String) arg);
                         break;
                     case T_UPDATE: {
-                        int n = api.updateInstances(settings.listUrl);
+                        int n = api.updateInstances(listSources());
                         settings.lastUpdate = System.currentTimeMillis();
                         settings.save(api);
                         say("Testing servers...");
@@ -842,6 +843,16 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
      * makes anything wait: one attempt per session, and a search started
      * while that attempt is still running goes ahead with the list it has.
      */
+    /** Where server lists come from: your own server (plain http, it fetches the rest), the list URL, TubeME's list on GitHub. */
+    private Vector listSources() {
+        Vector v = new Vector();
+        String mine = Util.cleanBase(api.own);
+        if (mine.length() > 0) v.addElement(mine + "/servers");
+        v.addElement(settings.listUrl);
+        if (!settings.listUrl.equals(Api.GITHUB_LIST_URL)) v.addElement(Api.GITHUB_LIST_URL);
+        return v;
+    }
+
     private void freshServers(int g) {
         long now = System.currentTimeMillis();
         // knowing only the built-in server means the list never loaded (say, no network at first start)
@@ -854,7 +865,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             listTriedAt = now;
         }
         try {
-            int n = api.updateInstances(settings.listUrl);
+            int n = api.updateInstances(listSources());
             settings.lastUpdate = now;
             settings.save(api);
             Log.add("server list: " + n + " servers");
