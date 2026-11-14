@@ -246,7 +246,10 @@ class Tools:
                 # lets yt-dlp fetch its YouTube challenge solver when the installed one is out of date
                 cmd += ["--remote-components", "ejs:github"]
             try:
+                t0 = time.time()
                 r = run(cmd + args, timeout=timeout, env=self.env())
+                what = next((a for a in args if a.startswith("http") or a.startswith("ytsearch")), "")
+                log("  yt-dlp took %.1f s %s" % (time.time() - t0, what[-60:]))
             except subprocess.TimeoutExpired:
                 raise RuntimeError("YouTube took too long to answer")
             err = r.stderr.decode("utf-8", "replace")
@@ -1079,7 +1082,25 @@ def lan_addresses(port):
     return ["http://%s:%d" % (a, port) for a in out] or ["http://127.0.0.1:%d" % port]
 
 
+def no_quickedit():
+    """Windows: clicking in the console window ("QuickEdit") freezes every program printing to
+    it until a key is pressed. For a server that logs each request that looks like "the server
+    is slow" or "stuck converting". Switch it off for this window."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.GetStdHandle(-10)  # console input
+        mode = ctypes.c_uint32()
+        if k.GetConsoleMode(h, ctypes.byref(mode)):
+            k.SetConsoleMode(h, (mode.value & ~0x0040) | 0x0080)  # QuickEdit off, extended flags on
+    except Exception:
+        pass
+
+
 def main():
+    no_quickedit()
     ap = argparse.ArgumentParser(description="TubeME server: converts YouTube videos for old phones.")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="0.0.0.0", help="address to listen on (default: every network)")

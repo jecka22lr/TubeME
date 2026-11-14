@@ -91,6 +91,17 @@ public class E2E {
             System.out.println("   another quality of the same video: " + took().trim());
         } catch (Exception e) { System.out.println("   " + e.getMessage()); }
 
+        System.out.println("--- timing, 4.7 minute video, Play pressed at once (report only) ---");
+        try {
+            Video v3 = api.info("kJQP7kiw5Fk");
+            t0 = System.currentTimeMillis();
+            api.stream(v3, Api.Q_MP4V_360, 0);
+            System.out.println("   MPEG-4 360p ready after " + took().trim());
+            t0 = System.currentTimeMillis();
+            api.stream(v3, Api.Q_H263_144, 0);
+            System.out.println("   H.263 144p of the same video after " + took().trim());
+        } catch (Exception e) { System.out.println("   " + e.getMessage()); }
+
         // the public services: reported, never failing the run (they come and go)
         System.out.println("--- public services (report only) ---");
         Api seeds = new Api(); seeds.seed();
