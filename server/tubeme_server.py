@@ -68,9 +68,12 @@ PROFILES = {
                      video=["-c:v", "mpeg4", "-vtag", "mp4v", "-b:v", "750k", "-g", "75", "-bf", "0"]),
     "h264-360": dict(ext="mp4", copy=True),
     # sound only: MP3 plays on nearly every phone with a music player, and is a tenth of the size
-    "mp3": dict(ext="mp3", audio_only=True, need="libmp3lame"),
+    "mp3-128": dict(ext="mp3", audio_only=True, need="libmp3lame", kbps=128),
+    "mp3-192": dict(ext="mp3", audio_only=True, need="libmp3lame", kbps=192),
+    "mp3-256": dict(ext="mp3", audio_only=True, need="libmp3lame", kbps=256),
+    "mp3-320": dict(ext="mp3", audio_only=True, need="libmp3lame", kbps=320),
 }
-ORDER = ["h263-144", "h264-144", "mp4v-240", "h264-240", "h263-288", "mp4v-270", "mp4v-360", "h264-360", "mp3"]
+ORDER = ["h263-144", "h264-144", "mp4v-240", "h264-240", "h263-288", "mp4v-270", "mp4v-360", "h264-360", "mp3-128", "mp3-192", "mp3-256", "mp3-320"]
 
 
 def log(*a):
@@ -556,14 +559,31 @@ class Server:
             raise RuntimeError("thumbnail: " + r.stderr.decode("utf-8", "replace")[-200:])
         return path
 
-    def source(self, vid, job):
-        """The original video on disk, downloaded once however many conversions want it."""
+    def source(self, vid, job, audio=False):
+        """The original video on disk, downloaded once however many conversions want it.
+        audio: YouTube's best sound on its own (usually Opus ~160 kbit/s), for the MP3 qualities:
+        the sound inside the 360p video is only 96 kbit/s AAC, which no MP3 bitrate can improve."""
+        stem = vid + (".audio" if audio else "")
         with self.lock:
-            lk = self.src_locks.setdefault(vid, threading.Lock())
+            lk = self.src_locks.setdefault(stem, threading.Lock())
         with lk:
             for name in os.listdir(self.src_dir):
-                if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
+                if self.is_source(name, vid, audio):
                     return os.path.join(self.src_dir, name)
+            if audio and not self.demo:
+                try:
+                    t0 = time.time()
+                    out = self.tools.ytdlp(["-f", "ba/b", "-N", "4", "-o", os.path.join(self.src_dir, "%(id)s.audio.%(ext)s"),
+                                            "--print", "after_move:filepath", "--no-simulate",
+                                            "https://www.youtube.com/watch?v=" + vid])
+                    lines = [l.strip() for l in out.splitlines() if l.strip()]
+                    if lines and os.path.isfile(lines[-1]):
+                        log("fetched sound of", vid, "%d KB in %.1f s" % (os.path.getsize(lines[-1]) // 1024, time.time() - t0))
+                        return lines[-1]
+                except Exception as e:
+                    log("couldn't fetch the sound on its own (%s): using the video's" % short(e))
+                job["state"] = "fetching"
+                return self.source(vid, job)
             job["state"] = "fetching"
             if self.demo:
                 n = int(vid[4:] or 1) if vid.startswith("demo") else 1
@@ -595,9 +615,17 @@ class Server:
                 log("fetched", vid, "%d KB in %.1f s" % (os.path.getsize(lines[-1]) // 1024, time.time() - t0))
                 return lines[-1]
             for name in os.listdir(self.src_dir):
-                if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
+                if self.is_source(name, vid, False):
                     return os.path.join(self.src_dir, name)
             raise RuntimeError("yt-dlp finished but left no file")
+
+    @staticmethod
+    def is_source(name, vid, audio):
+        if name.endswith(".part") or re.search(r"\.f\d+\.", name) or name.endswith(".ytdl"):
+            return False
+        if audio:
+            return name.startswith(vid + ".audio.")
+        return name.startswith(vid + ".") and not name.startswith(vid + ".audio.")
 
     MIRROR_INVIDIOUS = ["http://s60tube.io.vn", "https://yt.chocolatemoo53.com", "https://inv.nadeko.net",
                         "https://invidious.nerdvpn.de", "https://invidious.tiekoetter.com"]
@@ -759,13 +787,13 @@ class Server:
         p = PROFILES[key]
         tmp = out + ".part"
         try:
-            src = self.source(vid, job)
+            src = self.source(vid, job, audio=bool(p.get("audio_only")))
             with self.slots:
                 job["state"] = "converting"
                 dur, sw, sh = self.probe(src)
                 cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src]
                 if p.get("audio_only"):
-                    cmd += ["-vn", "-c:a", "libmp3lame", "-b:a", "96k", "-ar", "44100", "-ac", "2"]
+                    cmd += ["-vn", "-c:a", "libmp3lame", "-b:a", "%dk" % p["kbps"], "-ar", "44100", "-ac", "2"]
                 elif p.get("copy") and self.codecs(src) == ("h264", "aac"):
                     cmd += ["-c", "copy"]
                 elif p.get("copy"):

@@ -7,8 +7,9 @@
   the memory card as `.part` and the next Save of the same video and quality continues it.
   Works with TubeME and yt2009 servers (their files are fixed); YtAPILegacy converts on the fly,
   so its downloads still start over. Saved files are now named `TubeME_<id>_<quality>.<ext>`
-- **Sound only**: a new "Sound only (MP3)" quality, 96 kbit/s stereo, about a tenth of the size
-  of MPEG-4 360p. From TubeME servers (server 0.7.0)
+- **Sound only**: MP3 at 128, 192, 256 or 320 kbit/s, from TubeME servers (server 0.7.0). The
+  server fetches YouTube's best sound on its own for these (usually Opus at about 160 kbit/s)
+  rather than the 96 kbit/s sound inside the 360p video
 - **Saved videos**: lists what's in the download folder by title and quality. Choose a finished
   one to play it, an unfinished one to open its page where Save continues it; Delete removes
   the file

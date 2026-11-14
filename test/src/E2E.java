@@ -62,7 +62,7 @@ public class E2E {
         try { api.open(c); } catch (Exception e) { System.out.println("   " + e.getMessage()); }
         ok(c.items.size() > 0, "comments: " + c.items.size() + took());
 
-        int[] qs = { Api.Q_MP4V_360, Api.Q_H263_144, Api.Q_MP4V_240, Api.Q_H264, Api.Q_AUDIO };
+        int[] qs = { Api.Q_MP4V_360, Api.Q_H263_144, Api.Q_MP4V_240, Api.Q_H264, Api.Q_MP3_128, Api.Q_MP3_320 };
         for (int i = 0; i < qs.length; i++) {
             t0 = System.currentTimeMillis();
             String what = "play " + Api.Q_NAMES[qs[i]];

@@ -52,14 +52,14 @@ public class Tests {
         ok(!Util.h264OnlyQvga(null), "no platform: no note");
 
         int[] qc6 = Api.qualities(c6);
-        eq(Integer.valueOf(qc6.length), Integer.valueOf(8), "S60 5th quality count");
+        eq(Integer.valueOf(qc6.length), Integer.valueOf(11), "S60 5th quality count");
         ok(qc6[2] == Api.Q_MP4V_240 && qc6[3] == Api.Q_H264_240, "240p offered on S60 5th");
         for (int i = 0; i < qc6.length; i++) ok(qc6[i] != Api.Q_H264, "H.264 360p hidden on S60 5th");
         ok(qc6[1] == Api.Q_H264_144, "H.264 144p still offered on S60 5th");
-        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(9), "all offered on Symbian^3");
-        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(9), "all offered when platform unknown");
-        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(9), "a name per quality id");
-        eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(9), "a server key per quality id");
+        eq(Integer.valueOf(Api.qualities("NokiaN8-00/x/sw_platform=S60;sw_platform_version=5.2").length), Integer.valueOf(12), "all offered on Symbian^3");
+        eq(Integer.valueOf(Api.qualities(null).length), Integer.valueOf(12), "all offered when platform unknown");
+        eq(Integer.valueOf(Api.Q_NAMES.length), Integer.valueOf(12), "a name per quality id");
+        eq(Integer.valueOf(Api.Q_KEYS.length), Integer.valueOf(12), "a server key per quality id");
         eq(Api.Q_KEYS[Api.Q_MP4V_240], "mp4v-240", "240p key"); eq(Api.Q_KEYS[Api.Q_H263_144], "h263-144", "144p key");
 
         eq(Log.symbian("-191"), " (host unreachable)", "symbian error explained");

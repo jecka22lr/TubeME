@@ -90,6 +90,10 @@ if "-J" in a:
         sys.stderr.write("ERROR: [youtube] onlyimages1: Requested format is not available\\n"); sys.exit(1)
     print(json.dumps({"id": vid, "title": "Real title", "uploader": "Up", "duration": 125, "view_count": 9,
                       "upload_date": "20260102", "description": "d" * 3000})); sys.exit(0)
+if "-f" in a and a[a.index("-f") + 1] == "ba/b":   # sound on its own
+    out = a[a.index("-o") + 1].replace("%(id)s", vid).replace("%(ext)s", "webm")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=700", "-t", "4", "-c:a", "libopus", "-b:a", "160k", out], check=True)
+    print(out); sys.exit(0)
 assert "-f" in a and "bv*" in a[a.index("-f") + 1] and "--merge-output-format" in a and "--no-simulate" in a
 if vid == "botblocked1":
     sys.stderr.write("ERROR: [youtube] botblocked1: Sign in to confirm you're not a bot. This helps protect our community.\\n"); sys.exit(1)
@@ -174,6 +178,9 @@ def stub_phase():
         open(tmp, "wb").write(get(st["url"])[2]); v, a = probe(tmp)
         ok(v["codec_name"] == "h264" and a["codec_name"] == "aac" and "Baseline" in v.get("profile", ""),
            "h264-360 is made when YouTube's file isn't H.264 (%s %s)" % (v["codec_name"], v.get("profile")))
+        st = wait("realvideo00", "mp3-320")
+        ok(st["state"] == "ready", "mp3 from YouTube's best sound on its own: %s" % st)
+        ok(any(n.startswith("realvideo00.audio.") for n in os.listdir(os.path.join(cache, "src"))), "the sound was fetched on its own")
         st = wait("botblocked1", "mp4v-240")
         ok(st["state"] == "ready", "YouTube refuses this computer: the video comes through a mirror instead: %s" % st)
         st = wait("onlyimages1", "mp4v-240")
@@ -353,8 +360,8 @@ def main():
             "mp4v-360": ("mpeg4", 640, 352, "mp4"), "h264-360": ("h264", 640, 360, "mp4"),
         }
         saw_progress = False
-        ok("mp3" in quals, "offers sound only (MP3)")
-        for key in [k for k in quals if k != "mp3"]:
+        ok([k for k in quals if k.startswith("mp3")] == ["mp3-128", "mp3-192", "mp3-256", "mp3-320"], "offers sound only at 128-320 kbit/s")
+        for key in [k for k in quals if not k.startswith("mp3")]:
             url = None
             t0 = time.time()
             while time.time() - t0 < 60:
@@ -377,18 +384,19 @@ def main():
                 ok("Baseline" in v.get("profile", ""), "%s is Baseline profile (%s)" % (key, v.get("profile")))
             ok(a["codec_name"] in ("aac", "amr_nb"), "%s has sound (%s)" % (key, a["codec_name"]))
         ok(saw_progress, "progress states were reported while converting")
-        t0 = time.time()
-        while time.time() - t0 < 60:
-            st = js("/prepare?id=%s&q=mp3" % vid)[1]
-            if st["state"] in ("ready", "error"): break
-            time.sleep(0.2)
-        ok(st["state"] == "ready" and st["url"].endswith(".mp3"), "mp3 ready: %s" % st)
-        code, h3, mp3 = get(st["url"])
-        ok(code == 200 and h3["Content-Type"] == "audio/mpeg", "mp3 served as audio/mpeg")
-        tmp = os.path.join(cache, "o.mp3"); open(tmp, "wb").write(mp3)
-        sts = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type", "-of", "json", tmp],
-                                        stdout=subprocess.PIPE).stdout)["streams"]
-        ok([x["codec_name"] for x in sts] == ["mp3"], "sound only, MP3: %s" % sts)
+        for kb in (128, 192, 256, 320):
+            t0 = time.time()
+            while time.time() - t0 < 60:
+                st = js("/prepare?id=%s&q=mp3-%d" % (vid, kb))[1]
+                if st["state"] in ("ready", "error"): break
+                time.sleep(0.2)
+            ok(st["state"] == "ready" and st["url"].endswith(".mp3"), "mp3-%d ready: %s" % (kb, st))
+            code, h3, mp3 = get(st["url"])
+            ok(code == 200 and h3["Content-Type"] == "audio/mpeg", "mp3-%d served as audio/mpeg" % kb)
+            tmp = os.path.join(cache, "o.mp3"); open(tmp, "wb").write(mp3)
+            sts = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type,bit_rate", "-of", "json", tmp],
+                                            stdout=subprocess.PIPE).stdout)["streams"]
+            ok([x["codec_name"] for x in sts] == ["mp3"] and int(sts[0]["bit_rate"]) == kb * 1000, "sound only, MP3 %d kbit/s: %s" % (kb, sts))
 
         # resuming / seeking
         code, h, part = get(url, {"Range": "bytes=100-199"})
