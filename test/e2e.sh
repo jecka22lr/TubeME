@@ -11,10 +11,10 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) S=';' ;; esac
 CACHE=$(mktemp -d)
 rm -rf $T && mkdir -p $T/api $T/shim $T/app $T/cls
 (cd $T/api && jar xf ../../../lib/j2me-api.jar javax && rm -f javax/microedition/io/Connector.class javax/microedition/io/file/FileSystemRegistry.class)
-javac -nowarn -cp $T/api -d $T/shim $(find test/shim -name '*.java')
-javac -nowarn -cp "$T/shim$S$T/api" -d $T/app $(find src -name '*.java')
+javac -encoding UTF-8 -nowarn -cp $T/api -d $T/shim $(find test/shim -name '*.java')
+javac -encoding UTF-8 -nowarn -cp "$T/shim$S$T/api" -d $T/app $(find src -name '*.java')
 CP="$T/app$S$T/shim$S$T/api"
-javac -nowarn -cp "$CP" -d $T/cls test/src/E2E.java
+javac -encoding UTF-8 -nowarn -cp "$CP" -d $T/cls test/src/E2E.java
 $PY server/tubeme_server.py ${SERVER_ARGS:-} --port $PORT --cache "$CACHE" > $T/server.log 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; rm -rf "$CACHE"' EXIT
