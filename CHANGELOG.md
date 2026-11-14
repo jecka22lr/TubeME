@@ -12,6 +12,9 @@
 - **Several server lists, merged**: your own server's new `/servers` (plain http, it fetches the
   https lists for the phone), the list URL from Settings, and `servers.json` in this repository.
   One list being down costs nothing
+- **Server: when YouTube refuses your computer** ("Sign in to confirm you're not a bot"), the
+  server now gets the 360p file through an Invidious or Piped server (S60Tube first) and converts
+  that, so playing still works
 - Server: every request is logged (`GET /search?q=... -> 200 in 3.1 s`), so you can see the
   phone reaching it
 - End-to-end test in CI: the phone's own code against a real server and real YouTube, every

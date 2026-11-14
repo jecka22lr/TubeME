@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks the TubeME server end to end in demo mode (no internet). Needs ffmpeg + ffprobe.
 Exits non-zero on the first failed check."""
-import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import json, threading, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = 18190
@@ -76,6 +76,8 @@ if "-J" in a:
     print(json.dumps({"id": vid, "title": "Real title", "uploader": "Up", "duration": 125, "view_count": 9,
                       "upload_date": "20260102", "description": "d" * 3000})); sys.exit(0)
 assert "-f" in a and "bv*" in a[a.index("-f") + 1] and "--merge-output-format" in a and "--no-simulate" in a
+if vid == "botblocked1":
+    sys.stderr.write("ERROR: [youtube] botblocked1: Sign in to confirm you're not a bot. This helps protect our community.\\n"); sys.exit(1)
 if vid == "onlyimages1":
     sys.stderr.write("WARNING: [youtube] No supported JavaScript runtime could be found.\\n"
                      "WARNING: Only images are available for download. use --list-formats to see them\\n"
@@ -92,7 +94,23 @@ def stub_phase():
     global BASE
     cache = tempfile.mkdtemp(prefix="tubeme-stub-")
     stub = os.path.join(cache, "stub.py"); open(stub, "w").write(STUB)
-    env = dict(os.environ, TUBEME_YTDLP=json.dumps([sys.executable, stub]))
+    # a stand-in Invidious mirror that has the 360p file of one video YouTube "refuses"
+    clip = os.path.join(cache, "clip.mp4")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-f", "lavfi", "-i",
+                    "sine=frequency=500", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip], check=True)
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    class Mirror(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def do_GET(self):
+            if self.path.startswith("/latest_version?id=botblocked1"):
+                body = open(clip, "rb").read(); self.send_response(200); self.send_header("Content-Type", "video/mp4")
+            else:
+                body = b"nope"; self.send_response(404)
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    mirror = ThreadingHTTPServer(("127.0.0.1", 0), Mirror)
+    threading.Thread(target=mirror.serve_forever, daemon=True).start()
+    env = dict(os.environ, TUBEME_YTDLP=json.dumps([sys.executable, stub]),
+               TUBEME_MIRRORS=json.dumps(["http://127.0.0.1:%d" % mirror.server_address[1]]))
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 1)
     srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--no-update", "--port", str(PORT + 1), "--cache", cache],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -142,6 +160,8 @@ def stub_phase():
         open(tmp, "wb").write(get(st["url"])[2]); v, a = probe(tmp)
         ok(v["codec_name"] == "h264" and a["codec_name"] == "aac" and "Baseline" in v.get("profile", ""),
            "h264-360 is made when YouTube's file isn't H.264 (%s %s)" % (v["codec_name"], v.get("profile")))
+        st = wait("botblocked1", "mp4v-240")
+        ok(st["state"] == "ready", "YouTube refuses this computer: the video comes through a mirror instead: %s" % st)
         st = wait("onlyimages1", "mp4v-240")
         ok(st["state"] == "error" and "JavaScript runtime (Deno)" in st["error"], "no-formats failure is explained: %s" % st.get("error"))
     finally:

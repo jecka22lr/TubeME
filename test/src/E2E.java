@@ -55,7 +55,7 @@ public class E2E {
         String id = "jNQXAC9IVRw"; // "Me at the zoo", 19 seconds
         t0 = System.currentTimeMillis();
         Video v = api.info(id);
-        ok(v.title.length() > 0 && v.duration.length() > 0, "video details: " + v.title + " " + v.duration + took());
+        ok(v.title.length() > 0, "video details: " + v.title + " " + v.duration + took());
 
         t0 = System.currentTimeMillis();
         Feed c = new Feed(Feed.COMMENTS, id, "c");

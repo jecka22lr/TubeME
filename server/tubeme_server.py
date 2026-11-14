@@ -548,10 +548,19 @@ class Server:
                 if r.returncode:
                     raise RuntimeError("demo source: " + r.stderr.decode("utf-8", "replace")[-300:])
                 return path
-            out = self.tools.ytdlp(["-f", SOURCE_FORMAT, "--merge-output-format", "mkv",
-                                    "-o", os.path.join(self.src_dir, "%(id)s.%(ext)s"),
-                                    "--print", "after_move:filepath", "--no-simulate",
-                                    "https://www.youtube.com/watch?v=" + vid])
+            try:
+                out = self.tools.ytdlp(["-f", SOURCE_FORMAT, "--merge-output-format", "mkv",
+                                        "-o", os.path.join(self.src_dir, "%(id)s.%(ext)s"),
+                                        "--print", "after_move:filepath", "--no-simulate",
+                                        "https://www.youtube.com/watch?v=" + vid])
+            except Exception as e:
+                # YouTube refuses this computer (often "Sign in to confirm you're not a bot"):
+                # get the 360p file through an Invidious or Piped server instead
+                log("yt-dlp could not fetch", vid, "-", short(e), "- trying mirrors")
+                path = self.from_mirrors(vid)
+                if path:
+                    return path
+                raise
             lines = [l.strip() for l in out.splitlines() if l.strip()]
             if lines and os.path.isfile(lines[-1]):
                 return lines[-1]
@@ -559,6 +568,55 @@ class Server:
                 if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
                     return os.path.join(self.src_dir, name)
             raise RuntimeError("yt-dlp finished but left no file")
+
+    MIRROR_INVIDIOUS = ["http://s60tube.io.vn", "https://yt.chocolatemoo53.com", "https://inv.nadeko.net",
+                        "https://invidious.nerdvpn.de", "https://invidious.tiekoetter.com"]
+
+    def mirrors(self):
+        if os.environ.get("TUBEME_MIRRORS"):  # the tests point this at a local stand-in
+            return json.loads(os.environ["TUBEME_MIRRORS"]), []
+        lists = self.server_lists()
+        inv = list(self.MIRROR_INVIDIOUS)
+        for e in lists.get("invidious") or []:
+            e = e.rstrip("/")
+            if e not in inv:
+                inv.append(e)
+        pip = [e.split(",")[0].rstrip("/") for e in lists.get("piped") or []]
+        return inv, pip
+
+    def from_mirrors(self, vid):
+        """The 360p MP4 (picture and sound in one file) from the first mirror that has it, or None."""
+        path = os.path.join(self.src_dir, vid + ".mp4")
+        tmp = path + ".part"
+        inv, pip = self.mirrors()
+        tries = [(b, b + "/latest_version?id=%s&itag=18&local=true" % vid) for b in inv]
+        for b in pip:
+            try:
+                with urllib.request.urlopen(b + "/streams/" + vid, timeout=20) as u:
+                    d = json.loads(u.read().decode("utf-8"))
+                for st in d.get("videoStreams") or []:
+                    if not st.get("videoOnly") and "mp4" in (st.get("mimeType") or "") and st.get("url"):
+                        tries.append((b, st["url"]))
+                        break
+            except Exception as e:
+                log("  mirror", b, "-", short(e))
+        for base, url in tries[:12]:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TubeME/" + VERSION})
+                with urllib.request.urlopen(req, timeout=30) as u, open(tmp, "wb") as f:
+                    shutil.copyfileobj(u, f, 65536)
+                if os.path.getsize(tmp) < 20000 or self.codecs(tmp)[0] is None:
+                    raise RuntimeError("not a video (%d bytes)" % os.path.getsize(tmp))
+                os.replace(tmp, path)
+                log("  got", vid, "from", base, "(%d KB)" % (os.path.getsize(path) // 1024))
+                return path
+            except Exception as e:
+                log("  mirror", base, "-", short(e))
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return None
 
     # ---------- conversion ----------
 
