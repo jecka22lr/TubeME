@@ -9,6 +9,11 @@
   so its downloads still start over. Saved files are now named `TubeME_<id>_<quality>.<ext>`
 - **Sound only**: a new "Sound only (MP3)" quality, 96 kbit/s stereo, about a tenth of the size
   of MPEG-4 360p. From TubeME servers (server 0.7.0)
+- **Saved videos**: lists what's in the download folder by title and quality. Choose a finished
+  one to play it, an unfinished one to open its page where Save continues it; Delete removes
+  the file
+- **History**: every video you open, newest first (the last 100). Remove and Clear in the menu
+- **Favourites**: "Favourite" on a video page keeps it in Favourites ("Unfavourite" takes it out)
 
 ## 0.4.1 and server 0.6.1
 

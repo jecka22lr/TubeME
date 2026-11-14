@@ -63,6 +63,21 @@ final class Files {
         }
     }
 
+    /** Names of the files in a folder (sub-folders end in "/"). Empty when it can't be read. */
+    static java.util.Vector names(String dir) {
+        java.util.Vector v = new java.util.Vector();
+        FileConnection fc = null;
+        try {
+            fc = open(dir, Connector.READ);
+            for (java.util.Enumeration e = fc.list(); e.hasMoreElements();) v.addElement(e.nextElement());
+        } catch (Throwable t) {
+            Log.err("list " + dir, t);
+        } finally {
+            try { if (fc != null) fc.close(); } catch (Throwable t) {}
+        }
+        return v;
+    }
+
     static void closeOut() {
         FileConnection fc = outFc;
         outFc = null;

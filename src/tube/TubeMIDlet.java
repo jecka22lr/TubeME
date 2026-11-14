@@ -26,7 +26,7 @@ import javax.microedition.midlet.MIDlet;
 /** UI and flow. All network and file work happens on worker threads. */
 public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress {
     private static final int T_INFO = 3, T_PLAY = 4, T_DOWNLOAD = 5,
-            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10, T_FEED = 12, T_MORE = 13;
+            T_UPDATE = 6, T_THUMB = 7, T_PLAYFILE = 8, T_LOGFILE = 9, T_SWEEP = 10, T_FEED = 12, T_MORE = 13, T_FILES = 14;
     private static final long UPDATE_EVERY = 3L * 24 * 3600 * 1000;
 
     private Display display;
@@ -56,6 +56,22 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     private StringItem waitText;
 
     private final Command cBack = new Command("Back", Command.BACK, 2);
+    private final Command cFavAdd = new Command("Favourite", "Add to favourites", Command.SCREEN, 5);
+    private final Command cFavDel = new Command("Unfavourite", "Remove from favourites", Command.SCREEN, 5);
+    private final Command cRemove = new Command("Remove", "Remove from this list", Command.SCREEN, 2);
+    private final Command cClear = new Command("Clear", "Clear the list", Command.SCREEN, 3);
+    private final Command cDelete = new Command("Delete", "Delete the file", Command.SCREEN, 2);
+    private final Command cPage = new Command("Video page", Command.SCREEN, 3);
+
+    /** Kept on the phone: videos opened, favourites, and what was saved (for titles in Saved videos). */
+    private final Saved history = new Saved("tubeme-history", 100);
+    private final Saved favs = new Saved("tubeme-favs", 300);
+    private final Saved savedVids = new Saved("tubeme-saved", 300);
+    /** List screen -> the Saved list it shows. */
+    private final Hashtable localOf = new Hashtable();
+    private List filesList;
+    /** Rows of filesList: { path, video id, quality key or "", "part" or "" }. */
+    private Vector fileRows = new Vector();
     private final Command cExit = new Command("Exit", Command.EXIT, 3);
     private final Command cOk = new Command("OK", Command.OK, 1);
     private final Command cCancel = new Command("Cancel", Command.CANCEL, 1);
@@ -116,6 +132,9 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         menu = new List("TubeME", Choice.IMPLICIT);
         menu.append("Search", null);
         menu.append("Popular", null);
+        menu.append("Saved videos", null);
+        menu.append("Favourites", null);
+        menu.append("History", null);
         menu.append("Open ID or link", null);
         menu.append("Settings", null);
         menu.append("Servers", null);
@@ -317,6 +336,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         gen++;
         nav.removeAllElements();
         feedOf.clear();
+        localOf.clear();
         videoOf.clear();
         cur = null;
     }
@@ -330,7 +350,18 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 notifyDestroyed();
                 return;
             }
-            switch (menu.getSelectedIndex()) {
+            String item = menu.getString(menu.getSelectedIndex());
+            if (item.equals("Saved videos")) {
+                run(T_FILES, null, "Looking at the memory card...");
+                return;
+            }
+            if (item.equals("Favourites") || item.equals("History")) {
+                showLocal(item, item.equals("History") ? history : favs);
+                return;
+            }
+            int idx = item.equals("Search") ? 0 : item.equals("Popular") ? 1 : item.equals("Open ID or link") ? 2
+                    : item.equals("Settings") ? 3 : item.equals("Servers") ? 4 : item.equals("About") ? 5 : 6;
+            switch (idx) {
                 case 0:
                     if (searchBox == null) {
                         searchBox = new TextBox("Search", "", 100, TextField.ANY);
@@ -385,6 +416,36 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             } else {
                 show(menu);
             }
+        } else if (d == filesList) {
+            int i = filesList.getSelectedIndex();
+            String[] row = i >= 0 && i < fileRows.size() ? (String[]) fileRows.elementAt(i) : null;
+            if (c == cBack) {
+                show(menu);
+            } else if (row == null) {
+                return;
+            } else if (c == cDelete) {
+                run(T_FILES, row[0], "Deleting...");
+            } else if (c == cPage || row[3].length() > 0) {
+                // an unfinished file: open its page in the same quality, where Save continues it
+                int q = qualityOfKey(row[2]);
+                if (q >= 0 && contains(qIds, q)) settings.quality = q;
+                resetNav();
+                Video known = savedVids.find(row[1]);
+                if (known == null) known = history.find(row[1]);
+                run(T_INFO, known != null ? (Object) known : row[1], "Loading video...");
+            } else {
+                run(T_PLAYFILE, row[0], "Opening...");
+            }
+        } else if (d instanceof List && localOf.get(d) != null && (c == cRemove || c == cClear)) {
+            Saved sv = (Saved) localOf.get(d);
+            Feed f = (Feed) feedOf.get(d);
+            if (c == cClear) sv.clear();
+            else {
+                int i = ((List) d).getSelectedIndex();
+                if (i >= 0 && i < f.items.size()) sv.remove(((Video) f.items.elementAt(i)).id);
+            }
+            pop();
+            showLocal(f.title, sv);
         } else if (d instanceof List && feedOf.get(d) != null) {
             Feed f = (Feed) feedOf.get(d);
             if (c == cBack) {
@@ -404,6 +465,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                 pop();
             } else if (c == cPlay) {
                 play();
+            } else if (c == cFavAdd || c == cFavDel) {
+                if (c == cFavAdd) favs.add(cur);
+                else favs.remove(cur.id);
+                d.removeCommand(c);
+                d.addCommand(c == cFavAdd ? cFavDel : cFavAdd);
             } else if (c == cDownload) {
                 run(T_DOWNLOAD, Boolean.FALSE, "Preparing download...");
             } else if (c == cComments) {
@@ -605,7 +671,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
     }
 
     /** A list of videos with "More results..." at the end while there are more. */
-    private void showFeed(Feed f) {
+    private Displayable showFeed(Feed f) {
         if (f.comments()) {
             Form form = new Form("");
             feedOf.put(form, f);
@@ -613,7 +679,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             form.addCommand(cBack);
             form.setCommandListener(this);
             push(form);
-            return;
+            return form;
         }
         List l = new List(f.title, Choice.IMPLICIT);
         try {
@@ -625,6 +691,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         l.addCommand(cBack);
         l.setCommandListener(this);
         push(l);
+        return l;
     }
 
     /** Adds feed entries from index from on, keeping "More results..." last. */
@@ -681,6 +748,73 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         }
     }
 
+    /** History or favourites as a list; choosing an entry opens the video. */
+    private void showLocal(String title, Saved sv) {
+        Feed f = new Feed(Feed.LOCAL, "", title);
+        Vector l = sv.list();
+        for (int i = 0; i < l.size(); i++) f.items.addElement(l.elementAt(i));
+        f.end = true;
+        if (f.items.size() == 0) {
+            info(title, title.equals("History") ? "Videos you open show up here." : "Use \"Favourite\" on a video page to keep it here.", menu);
+            return;
+        }
+        resetNav();
+        Displayable top = showFeed(f);
+        localOf.put(top, sv);
+        top.addCommand(cRemove);
+        top.addCommand(cClear);
+    }
+
+    private static int qualityOfKey(String key) {
+        for (int i = 0; i < Api.Q_KEYS.length; i++) if (Api.Q_KEYS[i].equals(key)) return i;
+        return -1;
+    }
+
+    /** Videos in the download folder, finished and unfinished (.part). Runs on a worker thread. */
+    private void listFiles(int g) throws Exception {
+        String folder = dir();
+        Vector names = Files.names(folder);
+        Vector rows = new Vector();
+        Vector lines = new Vector();
+        for (int i = 0; i < names.size(); i++) {
+            String n = (String) names.elementAt(i);
+            if (!n.startsWith("TubeME_") || n.length() < 19) continue;
+            boolean part = n.endsWith(".part");
+            String base = part ? n.substring(0, n.length() - 5) : n;
+            int dot = base.lastIndexOf('.');
+            if (dot < 0) continue;
+            String ext = base.substring(dot + 1);
+            if (!(ext.equals("mp4") || ext.equals("3gp") || ext.equals("mp3"))) continue;
+            String id = base.substring(7, 18);
+            String key = base.length() > 19 && base.charAt(18) == '_' ? base.substring(19, dot) : "";
+            Video v = savedVids.find(id);
+            if (v == null) v = history.find(id);
+            int q = qualityOfKey(key);
+            StringBuffer b = new StringBuffer(v != null && v.title.length() > 0 ? v.title : id);
+            b.append(" [").append(q >= 0 ? Api.Q_NAMES[q] : ext).append(']');
+            if (part) b.append(" (unfinished, ").append(Files.size(folder + n) / 1024).append(" KB: choose to continue)");
+            rows.addElement(new String[] { folder + n, id, key, part ? "part" : "" });
+            lines.addElement(b.toString());
+        }
+        if (g != gen) return;
+        if (rows.size() == 0) {
+            info("Saved videos", "Nothing saved in " + folder.substring(8) + " yet. Use Save on a video page.", menu);
+            return;
+        }
+        filesList = new List("Saved videos", Choice.IMPLICIT);
+        try {
+            filesList.setFitPolicy(Choice.TEXT_WRAP_ON);
+        } catch (Throwable t) {
+        }
+        for (int i = 0; i < lines.size(); i++) filesList.append((String) lines.elementAt(i), null);
+        fileRows = rows;
+        filesList.addCommand(cDelete);
+        filesList.addCommand(cPage);
+        filesList.addCommand(cBack);
+        filesList.setCommandListener(this);
+        show(filesList);
+    }
+
     private void showVideo(Video v, int g) {
         cur = v;
         skip = 0;
@@ -701,9 +835,11 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
         if (v.channel.length() > 0) f.addCommand(cChannel);
         f.addCommand(cQuality);
         f.addCommand(cOther);
+        f.addCommand(favs.contains(v.id) ? cFavDel : cFavAdd);
         f.addCommand(cBack);
         f.setCommandListener(this);
         videoOf.put(f, v);
+        history.add(v);
         push(f);
         // (no heap check: totalMemory() is only the current heap on S60, not the limit;
         // a failed decode is caught and logged by the task)
@@ -792,6 +928,13 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                         break;
                     case T_PLAYFILE:
                         playFile((String) arg);
+                        break;
+                    case T_FILES:
+                        if (arg != null) {
+                            Files.delete((String) arg);
+                            Log.add("deleted " + arg);
+                        }
+                        listFiles(g);
                         break;
                     case T_UPDATE: {
                         int n = api.updateInstances(listSources());
@@ -1056,6 +1199,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
             }
         });
         if (done < 0) return;
+        savedVids.add(v);
         if (g != gen) return;
         savedPath = path;
         if (thenPlay) {

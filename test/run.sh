@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 T=build/test
 rm -rf $T /tmp/tubefs
 mkdir -p $T/api $T/shim $T/cls
-(cd $T/api && jar xf ../../../lib/j2me-api.jar javax && rm javax/microedition/io/Connector.class javax/microedition/io/file/FileSystemRegistry.class)
+(cd $T/api && jar xf ../../../lib/j2me-api.jar javax && rm javax/microedition/io/Connector.class javax/microedition/io/file/FileSystemRegistry.class javax/microedition/rms/RecordStore.class)
 javac -nowarn -cp $T/api -d $T/shim $(find test/shim -name '*.java') 2>/dev/null
 CP=build/classes:$T/shim:$T/api
 javac -nowarn -cp $CP -d $T/cls test/src/*.java 2>/dev/null

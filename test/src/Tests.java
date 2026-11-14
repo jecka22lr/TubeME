@@ -533,6 +533,22 @@ public class Tests {
         pin2.own = OWN;
         Feed pf2 = new Feed(Feed.SEARCH, "x", "x"); pin2.open(pf2); eq(pf2.kind, "T", "own server asked first again");
 
+        // --- history / favourites kept on the phone ---
+        {
+            Saved h = new Saved("t-hist", 3);
+            for (int i = 0; i < 4; i++) { Video x = new Video(); x.id = "vid" + i; x.title = "T" + i; x.channel = "UCx"; h.add(x); }
+            eq(Integer.valueOf(h.list().size()), Integer.valueOf(3), "history keeps at most its size");
+            eq(((Video) h.list().elementAt(0)).id, "vid3", "newest first");
+            Video again = new Video(); again.id = "vid1"; again.title = "T1 again"; h.add(again);
+            eq(((Video) h.list().elementAt(0)).title, "T1 again", "seeing a video again moves it up");
+            eq(Integer.valueOf(h.list().size()), Integer.valueOf(3), "no duplicates");
+            Saved h2 = new Saved("t-hist", 3);
+            eq(((Video) h2.list().elementAt(0)).id, "vid1", "kept across restarts");
+            eq(((Video) h2.list().elementAt(1)).channel, "UCx", "channel kept");
+            h2.remove("vid3"); ok(!new Saved("t-hist", 3).contains("vid3"), "remove");
+            h2.clear(); eq(Integer.valueOf(new Saved("t-hist", 3).list().size()), Integer.valueOf(0), "clear");
+        }
+
         // --- downloads that drop or stall pick up where they stopped ---
         {
             new java.io.File("/tmp/tubefs/E:").mkdirs();

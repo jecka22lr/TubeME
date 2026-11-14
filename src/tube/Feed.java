@@ -10,6 +10,8 @@ import java.util.Vector;
  */
 final class Feed {
     static final int SEARCH = 1, POPULAR = 2, RELATED = 3, CHANNEL = 4, COMMENTS = 5;
+    /** Kept on the phone (history, favourites): no server, no more pages. */
+    static final int LOCAL = 6;
 
     final int what;
     /** The search words, video id (related, comments) or channel (UC... id or @handle). */
