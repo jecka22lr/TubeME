@@ -476,8 +476,29 @@ class Server:
                      seconds=int(e.get("duration") or 0), views=int(e.get("view_count") or 0),
                      published=("%s-%s-%s" % (up[:4], up[4:6], up[6:8])) if len(up) == 8 else "",
                      description=(e.get("description") or "")[:1500])
+            if not d["seconds"] or not d["author"]:
+                self.fill_from_mirror(d)
         self.info_cache[vid] = d
         return d
+
+    def fill_from_mirror(self, d):
+        """YouTube gave this computer only part of the details (it does when it suspects a bot):
+        fill the gaps from an Invidious server."""
+        inv, _ = self.mirrors()
+        for base in inv[:6]:
+            try:
+                with urllib.request.urlopen(base + "/api/v1/videos/%s?fields=title,author,authorId,lengthSeconds,viewCount,description"
+                                            % d["id"], timeout=10) as u:
+                    m = json.loads(u.read().decode("utf-8"))
+                d["title"] = d["title"] or m.get("title") or ""
+                d["author"] = d["author"] or m.get("author") or ""
+                d["channel_id"] = d["channel_id"] or m.get("authorId") or ""
+                d["seconds"] = d["seconds"] or int(m.get("lengthSeconds") or 0)
+                d["views"] = d["views"] or int(m.get("viewCount") or 0)
+                d["description"] = d["description"] or (m.get("description") or "")[:1500]
+                return
+            except Exception as e:
+                log("  details from", base, "-", short(e))
 
     def comments(self, vid, page=1):
         """Top comments, COMMENT_PAGE at a time. yt-dlp can't start part-way, so page n fetches
@@ -585,31 +606,38 @@ class Server:
         return inv, pip
 
     def from_mirrors(self, vid):
-        """The 360p MP4 (picture and sound in one file) from the first mirror that has it, or None."""
+        """The 360p MP4 (picture and sound in one file) from the first mirror that has it, or None.
+        Invidious first (one request each), then Piped (a lookup, then the file)."""
         path = os.path.join(self.src_dir, vid + ".mp4")
         tmp = path + ".part"
         inv, pip = self.mirrors()
-        tries = [(b, b + "/latest_version?id=%s&itag=18&local=true" % vid) for b in inv]
-        for b in pip:
+        end = time.time() + 240
+
+        def fetch(base, url):
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TubeME/" + VERSION})
+            with urllib.request.urlopen(req, timeout=20) as u, open(tmp, "wb") as f:
+                shutil.copyfileobj(u, f, 65536)
+            if os.path.getsize(tmp) < 20000 or self.codecs(tmp)[0] is None:
+                raise RuntimeError("not a video (%d bytes)" % os.path.getsize(tmp))
+            os.replace(tmp, path)
+            log("  got", vid, "from", base, "(%d KB)" % (os.path.getsize(path) // 1024))
+            return path
+
+        def piped_url(base):
+            with urllib.request.urlopen(base + "/streams/" + vid, timeout=15) as u:
+                d = json.loads(u.read().decode("utf-8"))
+            for st in d.get("videoStreams") or []:
+                if not st.get("videoOnly") and "mp4" in (st.get("mimeType") or "") and st.get("url"):
+                    return st["url"]
+            raise RuntimeError("no combined MP4")
+
+        tries = [(b, None) for b in inv] + [(b, piped_url) for b in pip]
+        for base, lookup in tries:
+            if time.time() > end:
+                break
             try:
-                with urllib.request.urlopen(b + "/streams/" + vid, timeout=20) as u:
-                    d = json.loads(u.read().decode("utf-8"))
-                for st in d.get("videoStreams") or []:
-                    if not st.get("videoOnly") and "mp4" in (st.get("mimeType") or "") and st.get("url"):
-                        tries.append((b, st["url"]))
-                        break
-            except Exception as e:
-                log("  mirror", b, "-", short(e))
-        for base, url in tries[:12]:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TubeME/" + VERSION})
-                with urllib.request.urlopen(req, timeout=30) as u, open(tmp, "wb") as f:
-                    shutil.copyfileobj(u, f, 65536)
-                if os.path.getsize(tmp) < 20000 or self.codecs(tmp)[0] is None:
-                    raise RuntimeError("not a video (%d bytes)" % os.path.getsize(tmp))
-                os.replace(tmp, path)
-                log("  got", vid, "from", base, "(%d KB)" % (os.path.getsize(path) // 1024))
-                return path
+                url = lookup(base) if lookup else base + "/latest_version?id=%s&itag=18&local=true" % vid
+                return fetch(base, url)
             except Exception as e:
                 log("  mirror", base, "-", short(e))
         try:

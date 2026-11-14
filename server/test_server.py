@@ -23,6 +23,21 @@ def get(path, headers=None):
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()
 
+def spawn(cmd, **kw):
+    """Starts a server with its output going to a file: a pipe nobody reads fills up and stalls it."""
+    f = tempfile.TemporaryFile()
+    p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, **kw)
+    p.logf = f
+    return p
+
+def finish(p, t):
+    try:
+        p.wait(timeout=t)
+    except subprocess.TimeoutExpired:
+        p.kill(); p.wait()
+    p.logf.seek(0)
+    return (p.logf.read(),)
+
 def js(path):
     code, _, body = get(path)
     return code, json.loads(body.decode("utf-8"))
@@ -112,8 +127,7 @@ def stub_phase():
     env = dict(os.environ, TUBEME_YTDLP=json.dumps([sys.executable, stub]),
                TUBEME_MIRRORS=json.dumps(["http://127.0.0.1:%d" % mirror.server_address[1]]))
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 1)
-    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--no-update", "--port", str(PORT + 1), "--cache", cache],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    srv = spawn([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--no-update", "--port", str(PORT + 1), "--cache", cache], env=env)
     try:
         for _ in range(100):
             try:
@@ -166,7 +180,7 @@ def stub_phase():
         ok(st["state"] == "error" and "JavaScript runtime (Deno)" in st["error"], "no-formats failure is explained: %s" % st.get("error"))
     finally:
         srv.terminate()
-        try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
+        try: out = finish(srv, 5)[0].decode("utf-8", "replace")
         except Exception: out = ""
         if "--show-log" in sys.argv: print(out)
         shutil.rmtree(cache, ignore_errors=True)
@@ -180,7 +194,7 @@ def online_phase():
     env = dict(os.environ); env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
                                                            if not any(os.path.exists(os.path.join(p, n)) for n in ("deno", "deno.exe")))
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 2)
-    srv = subprocess.Popen([sys.executable, script, "--port", str(PORT + 2)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    srv = spawn([sys.executable, script, "--port", str(PORT + 2)], env=env)
     try:
         up = False
         for _ in range(900):   # first start downloads ~45 MB
@@ -202,7 +216,7 @@ def online_phase():
         ok(code == 200 and info["demo"] is False and len(info["qualities"]) >= 6, "serving for real with %d qualities" % len(info["qualities"]))
     finally:
         srv.terminate()
-        try: out = srv.communicate(timeout=10)[0].decode("utf-8", "replace")
+        try: out = finish(srv, 10)[0].decode("utf-8", "replace")
         except Exception: out = ""
         if "--show-log" in sys.argv or not up: print(out)
         shutil.rmtree(work, ignore_errors=True)
@@ -213,9 +227,9 @@ def public_phase():
     global BASE
     cache = tempfile.mkdtemp(prefix="tubeme-public-")
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 3)
-    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--key", "fr1ends",
+    srv = spawn([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--key", "fr1ends",
                             "--per-minute", "25", "--conversions-per-hour", "2", "--at-once", "1", "--max-minutes", "5",
-                            "--port", str(PORT + 3), "--cache", cache], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                            "--port", str(PORT + 3), "--cache", cache])
     try:
         for _ in range(100):
             try:
@@ -259,7 +273,7 @@ def public_phase():
         ok(get(st1["url"])[0] == 200, "downloads aren't blocked by the request limit")
     finally:
         srv.terminate()
-        try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
+        try: out = finish(srv, 5)[0].decode("utf-8", "replace")
         except Exception: out = ""
         if "--show-log" in sys.argv: print(out)
         shutil.rmtree(cache, ignore_errors=True)
@@ -270,8 +284,8 @@ def cap_off_phase():
     global BASE
     cache = tempfile.mkdtemp(prefix="tubeme-cap-")
     old, BASE = BASE, "http://127.0.0.1:%d" % (PORT + 4)
-    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--max-minutes", "0",
-                            "--port", str(PORT + 4), "--cache", cache], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    srv = spawn([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--public", "--max-minutes", "0",
+                            "--port", str(PORT + 4), "--cache", cache])
     try:
         for _ in range(100):
             try:
@@ -284,7 +298,7 @@ def cap_off_phase():
         ok(st["state"] != "error", "a long video is accepted with --max-minutes 0: %s" % st)
     finally:
         srv.terminate()
-        try: srv.communicate(timeout=5)
+        try: finish(srv, 5)
         except Exception: pass
         shutil.rmtree(cache, ignore_errors=True)
         BASE = old
@@ -295,8 +309,7 @@ def main():
     cap_off_phase()
     stub_phase()
     cache = tempfile.mkdtemp(prefix="tubeme-test-")
-    srv = subprocess.Popen([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--port", str(PORT), "--cache", cache],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    srv = spawn([sys.executable, os.path.join(HERE, "tubeme_server.py"), "--demo", "--port", str(PORT), "--cache", cache])
     try:
         for _ in range(50):
             try:
@@ -380,7 +393,7 @@ def main():
         ok(code == 200 and all(k in lists for k in ("tubeme", "ytapilegacy", "yt2009", "invidious", "piped")), "/servers hands out merged lists")
     finally:
         srv.terminate()
-        try: out = srv.communicate(timeout=5)[0].decode("utf-8", "replace")
+        try: out = finish(srv, 5)[0].decode("utf-8", "replace")
         except Exception: out = ""
         if "--show-log" in sys.argv: print(out)
         shutil.rmtree(cache, ignore_errors=True)

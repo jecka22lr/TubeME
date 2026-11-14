@@ -68,6 +68,24 @@ system-wide, so it also works on systems that don't allow `pip install` into the
 
 `--no-update` turns all of this off (nothing is installed, updated or downloaded).
 
+## When YouTube refuses your computer
+
+YouTube sometimes answers a computer with "Sign in to confirm you're not a bot", mostly
+servers in data centres but home connections too. The server then gets the 360p file through
+an Invidious or Piped server instead (S60Tube first, then the ones in the shared lists) and
+converts that, and fills in missing video details the same way. You'll see `trying mirrors`
+and `got ... from ...` in the window when it happens.
+
+## What you see in the window
+
+One line per request from the phone, like `192.168.1.40 GET /search?q=nokia -> 200 in 2.1 s`
+(repeated progress checks and thumbnails are left out). If nothing shows up when you search on
+the phone, the phone isn't reaching the server: check the address in TubeME's settings, the
+Wi-Fi, and the firewall.
+
+The server also hands the phone every public server list it can reach at `/servers`, over plain
+http, so the phone gets lists that are only on https too.
+
 ## Options
 
     --port 8765            port to listen on
