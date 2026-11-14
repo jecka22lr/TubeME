@@ -76,6 +76,21 @@ public class E2E {
             }
         }
 
+        // timing on a normal-length video, the way it's used: open the page, read for 15 s, press Play
+        System.out.println("--- timing, 3.5 minute video (report only) ---");
+        try {
+            Video v2 = api.info("dQw4w9WgXcQ");
+            t0 = System.currentTimeMillis();
+            api.warm(v2, Api.Q_MP4V_360);
+            Thread.sleep(15000);
+            long play = System.currentTimeMillis();
+            Api.Stream st = api.stream(v2, Api.Q_MP4V_360, 0);
+            System.out.println("   ready " + (System.currentTimeMillis() - play) / 1000 + " s after pressing Play (" + took().trim() + " since the page opened)");
+            t0 = System.currentTimeMillis();
+            Api.Stream st2 = api.stream(v2, Api.Q_H263_144, 0);
+            System.out.println("   another quality of the same video: " + took().trim());
+        } catch (Exception e) { System.out.println("   " + e.getMessage()); }
+
         // the public services: reported, never failing the run (they come and go)
         System.out.println("--- public services (report only) ---");
         Api seeds = new Api(); seeds.seed();

@@ -776,6 +776,7 @@ public class TubeMIDlet extends MIDlet implements CommandListener, Api.Progress 
                             if (v.channel.length() == 0) v.channel = s.channel;
                         }
                         showVideo(v, g);
+                        api.warm(v, settings.quality);
                         break;
                     }
                     case T_PLAY:

@@ -15,6 +15,11 @@
 - **Server: when YouTube refuses your computer** ("Sign in to confirm you're not a bot"), the
   server now gets the 360p file through an Invidious or Piped server (S60Tube first) and converts
   that, so playing still works
+- **Faster video**: the app asks your server to start on a video as soon as its page opens, so
+  Play usually finds it ready. When YouTube refuses the server, all mirrors are asked at once
+  instead of one by one (dead ones used to cost 20 s each), and a refusal no longer triggers a
+  pointless yt-dlp update first. yt-dlp fetches in 4 parallel pieces. The server window shows how
+  long each fetch took
 - Server: every request is logged (`GET /search?q=... -> 200 in 3.1 s`), so you can see the
   phone reaching it
 - End-to-end test in CI: the phone's own code against a real server and real YouTube, every

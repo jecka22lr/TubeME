@@ -194,6 +194,28 @@ final class Api {
         }
     }
 
+    /**
+     * Asks your own server to start on this video in the chosen quality while
+     * you're still reading the video page, so Play finds it ready or nearly.
+     * Own server only (public ones have limits per visitor). Never waits, never fails.
+     */
+    void warm(final Video v, final int quality) {
+        final String mine = Util.cleanBase(own);
+        if (mine.length() == 0 || v == null || v.id == null) return;
+        Hashtable q = (Hashtable) makes.get(mine);
+        if (q != null && !q.containsKey(Q_KEYS[quality])) return;
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    Net.getText(mine + "/prepare?id=" + v.id + "&q=" + Q_KEYS[quality], OWN_TIMEOUT);
+                    Log.add("warm " + v.id + " " + Q_KEYS[quality]);
+                } catch (Throwable t) {
+                    Log.err("warm", t);
+                }
+            }
+        }).start();
+    }
+
     static long POLL_EVERY = 1500;
     /** Your own server runs yt-dlp for search, details and comments, which can take a while. */
     static long OWN_TIMEOUT = 75000;

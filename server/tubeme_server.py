@@ -254,7 +254,9 @@ class Tools:
                 return r.stdout.decode("utf-8", "replace")
             for line in err.strip().splitlines()[-12:]:
                 log("  yt-dlp:", line[:300])
-            if attempt == 0 and self.update("a request failed"):
+            # "confirm you're not a bot" is YouTube refusing this computer, not an old yt-dlp: no point updating
+            bot = "not a bot" in err or "Sign in to confirm" in err
+            if attempt == 0 and not bot and self.update("a request failed"):
                 continue
             if "JavaScript runtime" in err or "Only images are available" in err or "challenge solving failed" in err:
                 raise RuntimeError("YouTube gave no video formats: the server's JavaScript runtime (Deno) "
@@ -570,7 +572,8 @@ class Server:
                     raise RuntimeError("demo source: " + r.stderr.decode("utf-8", "replace")[-300:])
                 return path
             try:
-                out = self.tools.ytdlp(["-f", SOURCE_FORMAT, "--merge-output-format", "mkv",
+                t0 = time.time()
+                out = self.tools.ytdlp(["-f", SOURCE_FORMAT, "--merge-output-format", "mkv", "-N", "4",
                                         "-o", os.path.join(self.src_dir, "%(id)s.%(ext)s"),
                                         "--print", "after_move:filepath", "--no-simulate",
                                         "https://www.youtube.com/watch?v=" + vid])
@@ -584,6 +587,7 @@ class Server:
                 raise
             lines = [l.strip() for l in out.splitlines() if l.strip()]
             if lines and os.path.isfile(lines[-1]):
+                log("fetched", vid, "%d KB in %.1f s" % (os.path.getsize(lines[-1]) // 1024, time.time() - t0))
                 return lines[-1]
             for name in os.listdir(self.src_dir):
                 if name.startswith(vid + ".") and not name.endswith(".part") and not re.search(r"\.f\d+\.", name):
@@ -605,39 +609,95 @@ class Server:
         pip = [e.split(",")[0].rstrip("/") for e in lists.get("piped") or []]
         return inv, pip
 
+    _mirror_dead = {}
+    _mirror_best = None
+
     def from_mirrors(self, vid):
-        """The 360p MP4 (picture and sound in one file) from the first mirror that has it, or None.
-        Invidious first (one request each), then Piped (a lookup, then the file)."""
+        """The 360p MP4 (picture and sound in one file) from a mirror, or None. All Invidious
+        mirrors are asked at once and the first to start sending video wins; Piped after that.
+        The winner is asked first next time, and mirrors that failed are left alone for 10 minutes."""
         path = os.path.join(self.src_dir, vid + ".mp4")
         tmp = path + ".part"
+        t0 = time.time()
         inv, pip = self.mirrors()
-        end = time.time() + 240
+        now = time.time()
+        inv = [b for b in inv if now - self._mirror_dead.get(b, 0) > 600]
+        if self._mirror_best in inv:
+            inv.remove(self._mirror_best)
+            inv.insert(0, self._mirror_best)
 
-        def fetch(base, url):
+        def opener(base, url):
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TubeME/" + VERSION})
-            with urllib.request.urlopen(req, timeout=20) as u, open(tmp, "wb") as f:
-                shutil.copyfileobj(u, f, 65536)
+            u = urllib.request.urlopen(req, timeout=12)
+            ctype = u.headers.get("Content-Type", "")
+            if "video" not in ctype and "octet" not in ctype:
+                u.close()
+                raise RuntimeError("sent %s, not video" % (ctype or "nothing"))
+            return u
+
+        def save(base, u):
+            try:
+                with open(tmp, "wb") as f:
+                    shutil.copyfileobj(u, f, 65536)
+            finally:
+                u.close()
             if os.path.getsize(tmp) < 20000 or self.codecs(tmp)[0] is None:
                 raise RuntimeError("not a video (%d bytes)" % os.path.getsize(tmp))
             os.replace(tmp, path)
-            log("  got", vid, "from", base, "(%d KB)" % (os.path.getsize(path) // 1024))
+            Server._mirror_best = base
+            log("fetched", vid, "%d KB in %.1f s from mirror %s" % (os.path.getsize(path) // 1024, time.time() - t0, base))
             return path
 
-        def piped_url(base):
-            with urllib.request.urlopen(base + "/streams/" + vid, timeout=15) as u:
-                d = json.loads(u.read().decode("utf-8"))
-            for st in d.get("videoStreams") or []:
-                if not st.get("videoOnly") and "mp4" in (st.get("mimeType") or "") and st.get("url"):
-                    return st["url"]
-            raise RuntimeError("no combined MP4")
+        # Invidious: race them
+        won = []
+        lock = threading.Lock()
+        done = threading.Event()
+        left = [len(inv[:10])]
 
-        tries = [(b, None) for b in inv] + [(b, piped_url) for b in pip]
-        for base, lookup in tries:
-            if time.time() > end:
+        def race(base):
+            try:
+                u = opener(base, base + "/latest_version?id=%s&itag=18&local=true" % vid)
+                with lock:
+                    if won:
+                        u.close()
+                        return
+                    won.append((base, u))
+                done.set()
+            except Exception as e:
+                Server._mirror_dead[base] = time.time()
+                log("  mirror", base, "-", short(e))
+            finally:
+                with lock:
+                    left[0] -= 1
+                    if left[0] == 0:
+                        done.set()
+
+        for b in inv[:10]:
+            threading.Thread(target=race, args=(b,), daemon=True).start()
+        if inv:
+            done.wait(30)
+        with lock:
+            first = won[0] if won else None
+            won.append(None)  # late answers get closed
+        if first:
+            try:
+                return save(*first)
+            except Exception as e:
+                Server._mirror_dead[first[0]] = time.time()
+                log("  mirror", first[0], "-", short(e))
+
+        # Piped: look up the file, then fetch it
+        for base in pip[:8]:
+            if time.time() - t0 > 180:
                 break
             try:
-                url = lookup(base) if lookup else base + "/latest_version?id=%s&itag=18&local=true" % vid
-                return fetch(base, url)
+                with urllib.request.urlopen(base + "/streams/" + vid, timeout=12) as u:
+                    d = json.loads(u.read().decode("utf-8"))
+                url = next((st["url"] for st in d.get("videoStreams") or []
+                            if not st.get("videoOnly") and "mp4" in (st.get("mimeType") or "") and st.get("url")), None)
+                if not url:
+                    raise RuntimeError("no combined MP4")
+                return save(base, opener(base, url))
             except Exception as e:
                 log("  mirror", base, "-", short(e))
         try:
