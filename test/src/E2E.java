@@ -70,7 +70,7 @@ public class E2E {
                 Api.Stream st = api.stream(v, qs[i], 0);
                 ok(st.url.startsWith(own), what + ": your server made it" + took());
                 String why = Net.probe(st.url);
-                ok(why == null, what + ": the file is real video" + (why == null ? "" : " (" + why + ")"));
+                ok(why == null, what + ": the file is real (video or sound)" + (why == null ? "" : " (" + why + ")"));
             } catch (Exception e) {
                 ok(false, what + ": " + e.getMessage() + took());
             }
